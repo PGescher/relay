@@ -6,6 +6,7 @@ export default function Login() {
   const [username, setU] = useState("");
   const [password, setP] = useState("");
   const [msg, setMsg] = useState("");
+  const localusername = localStorage.getItem("username");
 
   const loggedIn = !!getToken();
 
@@ -19,6 +20,7 @@ export default function Login() {
           : await api.signup(username.trim(), password);
       setToken(r.token);
       setMsg("Logged in ✅");
+      localStorage.setItem("username", String(username));
     } catch (err) {
       setMsg(err.message);
     }
@@ -26,6 +28,9 @@ export default function Login() {
 
   function logout() {
     clearToken();
+    localStorage.removeItem("username")
+    localStorage.removeItem("groupId")
+    localStorage.removeItem("inviteCode")
     setMsg("Logged out ✅");
   }
 
@@ -35,7 +40,7 @@ export default function Login() {
 
       {loggedIn && (
         <div style={{ marginBottom: 16 }}>
-          <p>You are logged in.</p>
+          <p>You are logged in as {localusername}</p>
           <button onClick={logout} style={{ padding: 12 }}>
             Logout
           </button>

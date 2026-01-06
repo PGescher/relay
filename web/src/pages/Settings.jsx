@@ -106,6 +106,14 @@ export default function Settings() {
 
       <p style={{ marginTop: 24, opacity: 0.8 }}>
         iPhone: needs HTTPS + “Add to Home Screen” + open from icon.
+
+        <p>
+        Roadmap: <br />
+        
+        Add Group Members Overview Tab from Settings <br />
+        
+        </p>
+
       </p>
     </div>
   );

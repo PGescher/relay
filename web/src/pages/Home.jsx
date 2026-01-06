@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../lib/api.js";
-import { useActionBar } from "../lib/actionBar.jsx";
-
+import { useActionBar } from "../lib/actionBarContext.js";
+import { useLocation } from "react-router-dom";
 
 function fmt(ts) {
   try {
@@ -16,6 +16,8 @@ export default function Home() {
   const [events, setEvents] = useState([]);
   const groupId = localStorage.getItem("groupId");
   const { setHomeAction } = useActionBar();
+  const location = useLocation();
+
 
 
   async function refreshFeed() {
@@ -29,6 +31,10 @@ export default function Home() {
   }
 
   useEffect(() => {
+  // this runs each time you navigate to Home (new location key)
+  setMsg("");
+  refreshFeed();
+
   // When Home is active, make the middle tab a Start button
   setHomeAction({
     label: "Start 💪",
@@ -36,10 +42,13 @@ export default function Home() {
     disabled: !groupId
   });
 
+  const t = setInterval(refreshFeed, 5000);
+  return () => clearInterval(t);
+
   // Cleanup when leaving Home
-  return () => setHomeAction(null);
+  //return () => setHomeAction(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [groupId]);
+}, [location.key, groupId]);
 
 
 

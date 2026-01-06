@@ -1,6 +1,6 @@
 import React from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useActionBar } from "./lib/actionBar.jsx";
+import { useActionBar } from "./lib/actionBarContext.js";
 
 const tabStyle = ({ isActive }) => ({
   flex: 1,
