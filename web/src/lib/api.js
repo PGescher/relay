@@ -32,13 +32,23 @@ async function req(path, method, body) {
   return data;
 }
 
+
+
 export const api = {
   signup: (username, password) => req("/signup", "POST", { username, password }),
   login: (username, password) => req("/login", "POST", { username, password }),
   createGroup: (name) => req("/groups", "POST", { name }),
   joinGroup: (invite_code) => req("/groups/join", "POST", { invite_code }),
   subscribePush: (sub) => req("/push/subscribe", "POST", sub),
-  startWorkout: (groupId) => req(`/groups/${groupId}/start`, "POST"),
-  feed: (groupId) => req(`/groups/${groupId}/feed`, "GET")
+  unsubscribePush: (endpoint) => req(`/push/unsubscribe`, "POST", { endpoint }),
+  startWorkout: (groupId) => req(`/groups/${groupId}/start`, "POST", {}),
+  feed: () => req(`/feed`, "GET"),
+  meGroups: () => req(`/me/groups`, "GET"),
+  groupMembers: (groupId) => req(`/groups/${groupId}/members`, "GET"),
+  setGroupPrefs: (groupId, prefs) => req(`/groups/${groupId}/prefs`, "POST", prefs),
+  leaveGroup: (groupId) => req(`/groups/${groupId}/leave`, "POST", {}),
+  kickMember: (groupId, userId) => req(`/groups/${groupId}/kick`, "POST", { user_id: userId }),
+  renameGroup: (groupId, name) => req(`/groups/${groupId}/rename`, "POST", { name }),
+  deleteGroup: (groupId) => req(`/groups/${groupId}/delete`, "POST", {}),
 };
 

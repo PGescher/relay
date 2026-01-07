@@ -12,3 +12,18 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     </ActionBarProvider>
   </React.StrictMode>
 );
+
+/*
+Landing Page
+Login -> Username -> Password
+
+Split Feed between Today and older Posts, or seen/new and old Posts
+Only show new/unseen posts and show older/seen posts after clicking show more at end of feed.
+Instead of having the Feed in a Scrollable Box
+
+Muting Notifications for a certain Group does not work.
+
+Group Setting displayed below the selected Group Button
+
+
+*/

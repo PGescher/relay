@@ -41,6 +41,15 @@ async function isMember(userId, groupId) {
   return !!r.rows[0];
 }
 
+async function isOwner(userId, groupId) {
+  const r = await pool.query(
+    "select 1 from group_members where group_id=$1 and user_id=$2 and role='owner'",
+    [groupId, userId]
+  );
+  return !!r.rows[0];
+}
+
+
 // -------------------- DB schema init (MVP) --------------------
 await pool.query(`
 create table if not exists users (
@@ -81,12 +90,66 @@ create table if not exists events (
   message text not null,
   created_at timestamptz not null default now()
 );
+
+create table if not exists group_prefs (
+  group_id bigint references groups(id) on delete cascade,
+  user_id bigint references users(id) on delete cascade,
+  muted_feed boolean not null default false,
+  muted_push boolean not null default false,
+  updated_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+
+
 `);
 
 // -------------------- Routes --------------------
 app.get("/health", async () => ({ ok: true }));
 
-app.get("/groups/:groupId/feed", { preHandler: authGuard }, async (req, reply) => {
+app.get("/feed", { preHandler: authGuard }, async (req) => {
+  const userId = Number(req.user.sub);
+
+  const r = await pool.query(
+    `select e.id, e.type, e.message, e.created_at,
+            u.username,
+            g.id as group_id, g.name as group_name
+     from events e
+     join users u on u.id=e.user_id
+     join groups g on g.id=e.group_id
+     join group_members gm on gm.group_id=e.group_id and gm.user_id=$1
+     left join group_prefs gp on gp.group_id=e.group_id and gp.user_id=$1
+     where coalesce(gp.muted_feed,false)=false
+     order by e.created_at desc
+     limit 200`,
+    [userId]
+  );
+
+  return { events: r.rows };
+});
+
+app.get("/me/groups", { preHandler: authGuard }, async (req) => {
+  const userId = Number(req.user.sub);
+
+  const r = await pool.query(
+    `select g.id, g.name, g.invite_code,
+            (gm.role='owner') as is_owner,
+            gm.role,
+            coalesce(gp.muted_feed,false) as muted_feed,
+            coalesce(gp.muted_push,false) as muted_push,
+            g.created_at
+     from group_members gm
+     join groups g on g.id = gm.group_id
+     left join group_prefs gp on gp.group_id=g.id and gp.user_id=$1
+     where gm.user_id=$1
+     order by g.created_at desc`,
+    [userId]
+  );
+
+  return { groups: r.rows };
+});
+
+
+app.get("/groups/:groupId/members", { preHandler: authGuard }, async (req, reply) => {
   const userId = Number(req.user.sub);
   const groupId = Number(req.params.groupId);
 
@@ -95,17 +158,114 @@ app.get("/groups/:groupId/feed", { preHandler: authGuard }, async (req, reply) =
   }
 
   const r = await pool.query(
-    `select e.id, e.type, e.message, e.created_at, u.username
-     from events e
-     join users u on u.id=e.user_id
-     where e.group_id=$1
-     order by e.created_at desc
-     limit 100`,
+    `select u.id, u.username, gm.role
+     from group_members gm
+     join users u on u.id=gm.user_id
+     where gm.group_id=$1
+     order by (gm.role='owner') desc, u.username asc`,
     [groupId]
   );
 
-  return { events: r.rows };
+  return { members: r.rows };
 });
+
+app.post("/groups/:groupId/prefs", { preHandler: authGuard }, async (req, reply) => {
+  const userId = Number(req.user.sub);
+  const groupId = Number(req.params.groupId);
+  const { muted_feed, muted_push } = req.body || {};
+
+  if (!(await isMember(userId, groupId))) {
+    return reply.code(403).send({ error: "not a member of this group" });
+  }
+
+  await pool.query(
+    `insert into group_prefs(group_id, user_id, muted_feed, muted_push)
+     values ($1,$2,$3,$4)
+     on conflict (group_id, user_id)
+     do update set muted_feed=$3, muted_push=$4, updated_at=now()`,
+    [groupId, userId, !!muted_feed, !!muted_push]
+  );
+
+  return { ok: true, muted_feed: !!muted_feed, muted_push: !!muted_push };
+});
+
+
+app.post("/groups/:groupId/leave", { preHandler: authGuard }, async (req, reply) => {
+  const userId = Number(req.user.sub);
+  const groupId = Number(req.params.groupId);
+
+  if (!(await isMember(userId, groupId))) {
+    return reply.code(403).send({ error: "not a member of this group" });
+  }
+
+  // owner cannot leave yet (MVP)
+  if (await isOwner(userId, groupId)) {
+    return reply.code(400).send({ error: "owner cannot leave yet (delete or transfer ownership not implemented)" });
+  }
+
+  await pool.query("delete from group_members where group_id=$1 and user_id=$2", [groupId, userId]);
+  await pool.query("delete from group_prefs where group_id=$1 and user_id=$2", [groupId, userId]);
+
+  return { ok: true };
+});
+
+
+app.post("/push/unsubscribe", { preHandler: authGuard }, async (req, reply) => {
+  const userId = Number(req.user.sub);
+  const { endpoint } = req.body || {};
+  if (!endpoint) return reply.code(400).send({ error: "missing endpoint" });
+
+  await pool.query(`delete from push_subscriptions where user_id=$1 and endpoint=$2`, [userId, endpoint]);
+  return { ok: true };
+});
+
+app.post("/groups/:groupId/kick", { preHandler: authGuard }, async (req, reply) => {
+  const ownerId = Number(req.user.sub);
+  const groupId = Number(req.params.groupId);
+  const { user_id } = req.body || {};
+  const targetId = Number(user_id);
+
+  if (!targetId) return reply.code(400).send({ error: "missing user_id" });
+  if (!(await isOwner(ownerId, groupId))) return reply.code(403).send({ error: "owner only" });
+  if (targetId === ownerId) return reply.code(400).send({ error: "cannot kick yourself" });
+
+  // do not allow kicking another owner (MVP: single-owner groups)
+  const targetRole = await pool.query(
+    "select role from group_members where group_id=$1 and user_id=$2",
+    [groupId, targetId]
+  );
+  if (!targetRole.rows[0]) return reply.code(404).send({ error: "user not in group" });
+  if (targetRole.rows[0].role === "owner") return reply.code(400).send({ error: "cannot kick owner" });
+
+  await pool.query("delete from group_members where group_id=$1 and user_id=$2", [groupId, targetId]);
+  await pool.query("delete from group_prefs where group_id=$1 and user_id=$2", [groupId, targetId]);
+
+  return { ok: true };
+});
+
+app.post("/groups/:groupId/rename", { preHandler: authGuard }, async (req, reply) => {
+  const userId = Number(req.user.sub);
+  const groupId = Number(req.params.groupId);
+  const { name } = req.body || {};
+
+  if (!name || String(name).trim().length < 1) return reply.code(400).send({ error: "missing name" });
+  if (!(await isOwner(userId, groupId))) return reply.code(403).send({ error: "owner only" });
+
+  const r = await pool.query("update groups set name=$1 where id=$2 returning id, name", [String(name).trim(), groupId]);
+  if (!r.rows[0]) return reply.code(404).send({ error: "group not found" });
+  return { ok: true, group: r.rows[0] };
+});
+
+app.post("/groups/:groupId/delete", { preHandler: authGuard }, async (req, reply) => {
+  const userId = Number(req.user.sub);
+  const groupId = Number(req.params.groupId);
+
+  if (!(await isOwner(userId, groupId))) return reply.code(403).send({ error: "owner only" });
+
+  await pool.query("delete from groups where id=$1", [groupId]); // cascades members/events/prefs
+  return { ok: true };
+});
+
 
 // Signup: username + password -> JWT
 app.post("/signup", async (req, reply) => {
@@ -216,13 +376,17 @@ app.post("/groups/:groupId/start", { preHandler: authGuard }, async (req, reply)
 
   // Find all members + their subscriptions
   const members = await pool.query(
-    `select u.id, u.username, ps.endpoint, ps.p256dh, ps.auth
-     from group_members gm
-     join users u on u.id=gm.user_id
-     left join push_subscriptions ps on ps.user_id=u.id
-     where gm.group_id=$1`,
+    `select u.id, u.username, ps.endpoint, ps.p256dh, ps.auth,
+            coalesce(gp.muted_push,false) as muted_push
+    from group_members gm
+    join users u on u.id=gm.user_id
+    left join push_subscriptions ps on ps.user_id=u.id
+    left join group_prefs gp on gp.group_id=gm.group_id and gp.user_id=gm.user_id
+    where gm.group_id=$1`,
     [groupId]
   );
+
+  const targets = members.rows.filter(m => m.endpoint && !m.muted_push);
 
   const payload = JSON.stringify({
     title: "Workout started",
@@ -248,7 +412,7 @@ app.post("/groups/:groupId/start", { preHandler: authGuard }, async (req, reply)
       )
   );
 
-  return { ok: true, notified: members.rows.filter((m) => m.endpoint).length };
+  return { ok: true, notified: targets.length };
 });
 
 app.listen({ port: 3000, host: "0.0.0.0" });

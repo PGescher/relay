@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { api, setToken, getToken, clearToken } from "../lib/api.js";
+import { useNavigate } from "react-router-dom";
 
 export default function Login() {
   const [mode, setMode] = useState("login");
@@ -7,6 +8,7 @@ export default function Login() {
   const [password, setP] = useState("");
   const [msg, setMsg] = useState("");
   const localusername = localStorage.getItem("username");
+  const nav = useNavigate();
 
   const loggedIn = !!getToken();
 
@@ -21,6 +23,14 @@ export default function Login() {
       setToken(r.token);
       setMsg("Logged in ✅");
       localStorage.setItem("username", String(username));
+      const pending = localStorage.getItem("pendingInvite");
+      if (pending) {
+        localStorage.removeItem("pendingInvite");
+        nav(`/join/${pending}`, { replace: true });
+        return;
+      }
+      nav("/", { replace: true });
+
     } catch (err) {
       setMsg(err.message);
     }

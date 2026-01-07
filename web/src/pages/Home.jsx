@@ -18,6 +18,7 @@ export default function Home() {
   const { setHomeAction } = useActionBar();
   const location = useLocation();
 
+  const [pushHint, setPushHint] = useState("");
 
 
   async function refreshFeed() {
@@ -31,6 +32,23 @@ export default function Home() {
   }
 
   useEffect(() => {
+    (async () => {
+      try {
+        if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+          setPushHint("");
+          return;
+        }
+        if (Notification.permission !== "granted") {
+          setPushHint("Notifications are off. Enable them in Settings for group alerts.");
+          return;
+        }
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        setPushHint(sub ? "" : "Enable notifications in Settings to receive group alerts.");
+      } catch {
+        setPushHint("Enable notifications in Settings to receive group alerts.");
+      }
+    })();
   // this runs each time you navigate to Home (new location key)
   setMsg("");
   refreshFeed();
@@ -69,6 +87,12 @@ export default function Home() {
     <div style={{ padding: 20, maxWidth: 520, margin: "0 auto" }}>
       <h2>Home</h2>
 
+      {pushHint && (
+        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 10, marginBottom: 12 }}>
+          {pushHint} <a href="/settings">Open Settings</a>
+        </div>
+      )}
+
       <div style={{ marginBottom: 12, opacity: 0.85 }}>
         Group ID: {groupId || "—"}
       </div>
@@ -77,13 +101,25 @@ export default function Home() {
 
       <h3 style={{ marginTop: 24 }}>Feed</h3>
       {!groupId && <p style={{ opacity: 0.8 }}>Join or create a group in Settings to see the feed.</p>}
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {events.map((e) => (
-          <div key={e.id} style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
-            <div style={{ fontWeight: 700 }}>{e.message}</div>
-            <div style={{ opacity: 0.75, marginTop: 4 }}>
-              {e.username} • {fmt(e.created_at)}
+      
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 12,
+          padding: 12,
+          maxHeight: "55vh",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch"
+        }}
+      >
+        {events.map(ev => (
+          <div key={ev.id} style={{ padding: "10px 0", borderBottom: "1px solid #eee" }}>
+            <div style={{ fontWeight: 700 }}>
+              {ev.username} <span style={{ opacity: 0.6 }}>· {ev.group_name} • {fmt(ev.created_at)}</span>
+            </div>
+            <div style={{ opacity: 0.85 }}>{ev.message}</div>
+            <div style={{ opacity: 0.6, fontSize: 13 }}>
+              {new Date(ev.created_at).toLocaleString()}
             </div>
           </div>
         ))}

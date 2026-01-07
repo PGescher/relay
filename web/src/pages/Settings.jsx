@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "../lib/api.js";
+import { useNavigate } from "react-router-dom";
+
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -8,25 +10,49 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
 }
 
+async function getExistingSub() {
+    const reg = await navigator.serviceWorker.ready;
+    return await reg.pushManager.getSubscription();
+  }
+
 async function subscribeToPush() {
-  const reg = await navigator.serviceWorker.ready;
-  const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-  if (!vapidPublicKey) throw new Error("Missing VITE_VAPID_PUBLIC_KEY (set in docker compose)");
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
-  });
-  return sub.toJSON();
-}
+    const reg = await navigator.serviceWorker.ready;
+    const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+    if (!vapidPublicKey) throw new Error("Missing VITE_VAPID_PUBLIC_KEY");
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+    });
+    return sub;
+  }
 
 export default function Settings() {
   const [msg, setMsg] = useState("");
 
   const [groupName, setGroupName] = useState("Friends");
   const [invite, setInvite] = useState("");
+  const nav = useNavigate();
 
   const groupId = localStorage.getItem("groupId");
   const inviteCode = localStorage.getItem("inviteCode");
+  const inviteLink = inviteCode ? `${window.location.origin}/join/${inviteCode}` : "";
+
+  const [pushStatus, setPushStatus] = useState("unknown"); // enabled/disabled/unsupported
+
+  useEffect(() => {
+      (async () => {
+        try {
+          if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+            setPushStatus("unsupported");
+            return;
+          }
+          const sub = await getExistingSub();
+          setPushStatus(sub ? "enabled" : "disabled");
+        } catch {
+          setPushStatus("disabled");
+        }
+      })();
+    }, []);
 
   async function createGroup() {
     setMsg("");
@@ -54,18 +80,42 @@ export default function Settings() {
   async function enablePush() {
     setMsg("");
     try {
-      if (!("serviceWorker" in navigator)) throw new Error("No service worker support (iPhone needs HTTPS + Add to Home Screen)");
+      if (!("serviceWorker" in navigator)) throw new Error("No service worker support");
       if (!("PushManager" in window)) throw new Error("No push support in this browser");
+
       const perm = await Notification.requestPermission();
       if (perm !== "granted") throw new Error("Notification permission not granted");
 
       const sub = await subscribeToPush();
-      await api.subscribePush(sub);
+      await api.subscribePush(sub.toJSON());
+      setPushStatus("enabled");
       setMsg("Push enabled ✅");
     } catch (e) {
       setMsg(e.message);
     }
   }
+
+  async function disablePush() {
+    setMsg("");
+    try {
+      const sub = await getExistingSub();
+      if (!sub) {
+        setPushStatus("disabled");
+        setMsg("Push already disabled.");
+        return;
+      }
+      const endpoint = sub.endpoint;
+      await sub.unsubscribe();
+      await api.unsubscribePush(endpoint);
+      setPushStatus("disabled");
+      setMsg("Push disabled ✅");
+    } catch (e) {
+      setMsg(e.message);
+    }
+  }
+
+
+
 
   return (
     <div style={{ padding: 20, maxWidth: 520, margin: "0 auto" }}>
@@ -75,6 +125,23 @@ export default function Settings() {
         Group ID: {groupId || "—"}<br />
         Invite Code: {inviteCode || "—"}<br />
       </div>
+
+      {inviteLink && (
+          <button
+            onClick={async () => {
+              try {
+                if (navigator.share) await navigator.share({ title: "Relay Invite", text: "Join my group", url: inviteLink });
+                await navigator.clipboard.writeText(inviteLink);
+                setMsg("Invite link copied ✅");
+              } catch {
+                setMsg("Could not copy link (clipboard blocked).");
+              }
+            }}
+            style={{ width: "100%", padding: 12, marginBottom: 10 }}
+          >
+            Copy Invite Link
+          </button>
+        )}
 
       <h3>Create Group</h3>
       <input
@@ -97,27 +164,26 @@ export default function Settings() {
         Join
       </button>
 
-      <h3 style={{ marginTop: 24 }}>Notifications</h3>
-      <button onClick={enablePush} style={{ width: "100%", padding: 12 }}>
+      <p style={{ opacity: 0.8 }}>
+        Push: <b>{pushStatus}</b>
+      </p>
+
+      <button onClick={enablePush} style={{ width: "100%", padding: 12, marginBottom: 10 }}>
         Enable Notifications
+      </button>
+
+      <button onClick={disablePush} style={{ width: "100%", padding: 12, marginBottom: 10 }}>
+        Disable Notifications
+      </button>
+
+      <button onClick={() => nav("/groups")} style={{ width: "100%", padding: 12, marginBottom: 10 }}>
+        Groups & Members
       </button>
 
       {msg && <p style={{ marginTop: 12 }}>{msg}</p>}
 
       <p style={{ marginTop: 24, opacity: 0.8 }}>
         iPhone: needs HTTPS + “Add to Home Screen” + open from icon.
-
-        <p>
-        Roadmap: <br />
-        
-        Add Group Members Overview Tab from Settings <br />
-        Show which Group you are part of an enable leving Group <br />
-        Disable Notifications in Settings <br />
-        Notification Enable Prompt, if not enabled upon Startup <br />
-        Simplify Group Inviting and Joining, links. <br />
-        
-        
-        </p>
 
       </p>
     </div>

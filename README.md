@@ -7,7 +7,6 @@ From Project Root:
 "npm i -g web-push >/dev/null 2>&1 && node -e \"import webpush from 'web-push'; console.log(webpush.generateVAPIDKeys());\""
 ``
 
-
 ## version 0.1 MVP:
 - Open URL on phone
 - Sign up (username/password)
@@ -16,76 +15,22 @@ From Project Root:
 - Both click Enable Notifications
 - Press Start Fitness → others get push
 
-# Design Document:
 
-Relay (MVP) — Design Document
+## version 0.1.1 MVP:
 
-Purpose
-A lightweight accountability + motivation app for friends: create/join groups, send “Start Fitness” signals, and view an activity feed. Push notifications for real-time “someone started a workout”.
+- Group Overview Page
+  - Display Groups you are Member of Owner of
+  - Show Members of Groups you are in
+  - Kick Members if you are Owner
+  - Leave a Group
+  - Create Invite Links to a certain Group
+  - Mute Feed for a Group to not have it display in Feed
+  - Mute Notifications for a Group to not have it send notifications
+  - Delete Group if Owner
+  - Rename Group if Owner
+  - When leaving group do not receive push notifications from it.
 
-Platforms
 
-PWA (iOS + Android)
-
-iOS push requires: HTTPS + Add to Home Screen + open from icon
-
-Architecture
-
-Frontend: React + Vite (built to static dist/)
-
-Backend: Node.js (Fastify) REST API
-
-Database: Postgres
-
-Push: Web Push (VAPID) + Service Worker
-
-Public access: Cloudflare Quick Tunnel (trycloudflare.com) → Caddy → web/api
-
-Core Entities
-
-users: username/password_hash, created_at
-
-groups: name, invite_code, created_by
-
-group_members: membership, role
-
-push_subscriptions: per-user web push endpoint + keys
-
-events: group feed items (type/message/timestamp)
-
-Key Flows
-
-Signup/Login → JWT stored client-side
-
-Create Group → creates group + adds owner membership
-
-Join Group → adds membership by invite code
-
-Enable Notifications → browser subscribes → POST subscription to backend
-
-Start Fitness → backend logs event + pushes notification to all subscribed members
-
-Home Feed → GET group feed, shows event list
-
-Security
-
-JWT auth for protected routes
-
-Push subscription stored per endpoint
-
-No email reset (manual reset for MVP)
-
-Tunnel avoids inbound exposure of home network
-
-Known Limitations
-
-Quick tunnel URL changes on restart
-
-Polling feed (not realtime socket yet)
-
-No group leaving / membership management yet
-
-No notification unsubscribe endpoint yet
 
 ## Startup
 
