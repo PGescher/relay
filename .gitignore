@@ -62,3 +62,5 @@ yarn-error.log*
 # --- TypeScript ---
 # Only if you use a separate declaration folder
 # declarations/
+apps/web/.vite/deps/package.json
+apps/web/.vite/deps/_metadata.json
