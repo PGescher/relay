@@ -20,7 +20,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const navigate = useNavigate();
 
   const setActiveTab = (tab: string) => {
-    if (tab === 'history') navigate('/activities');
+    if (tab === 'history') navigate('/activities/gym/history');
     if (tab === 'home') navigate('/home');
     if (tab === 'gym') navigate('/activities/gym');
   };

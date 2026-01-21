@@ -13,6 +13,7 @@ import SignupPage from './features/auth/SignupPage';
 import LoginPage from './features/auth/LoginPage';
 import ActivitiesOverview from './features/activities/ActivitesOverview';
 import GymDashboard from './features/gym-tracker/GymDashboard';
+import GymHistory from './features/gym-tracker/GymHistory';
 import HomeHub from './features/home/HomeHub';
 
 // This logic detects if we are in a limited environment (like some web previews)
@@ -46,6 +47,7 @@ const AppContent: React.FC = () => {
               <Route path="/home" element={<HomeHub user={user}/>} />
               <Route path="/activities" element={<ActivitiesOverview />} />
               <Route path="/activities/gym" element={<GymDashboard />} />
+              <Route path="/activities/gym/history" element={<GymHistory />} />
               <Route path="/feed" element={<PlaceholderView title="Social Feed" />} />
               <Route path="/settings" element={<PlaceholderView title="Settings" />} />
               <Route path="*" element={<Navigate to="/home" />} />

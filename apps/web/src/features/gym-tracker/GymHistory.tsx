@@ -3,7 +3,7 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { Calendar, ChevronRight, Clock, Award } from 'lucide-react';
 
-const WorkoutHistory: React.FC = () => {
+const GymHistory: React.FC = () => {
   const { workoutHistory } = useApp();
 
   const formatDate = (timestamp: number) => {
@@ -77,4 +77,4 @@ const WorkoutHistory: React.FC = () => {
   );
 };
 
-export default WorkoutHistory;
+export default GymHistory;

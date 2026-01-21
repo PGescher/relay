@@ -53,19 +53,19 @@ const GymDashboard: React.FC = () => {
         <DashboardAction 
             icon={<Trophy size={20} className="text-yellow-500" />} 
             title="Personal Records" 
-            meta="3 new this week"
+            meta="Coming Soon"
             onClick={() => {}}
         />
         <DashboardAction 
             icon={<TrendingUp size={20} className="text-green-500" />} 
             title="Progress Analytics" 
-            meta="Trending +12%"
+            meta="Coming Soon"
             onClick={() => {}}
         />
       </div>
 
       <div className="bg-[var(--bg-card)] rounded-3xl p-6 border border-[var(--border)]">
-        <h3 className="font-black text-sm uppercase tracking-widest text-gray-400 mb-4">Recommended for you</h3>
+        <h3 className="font-black text-sm uppercase tracking-widest text-gray-400 mb-4">Recommended for you - Coming Soon</h3>
         <div className="space-y-4">
             <WorkoutCard title="Hypertrophy A" tags={['Push', 'Chest', 'Triceps']} />
             <WorkoutCard title="Powerlifting S" tags={['Legs', 'Deadlift', 'Squat']} />
