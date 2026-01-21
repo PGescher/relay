@@ -1,9 +1,10 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Home, MessageSquare, Zap, User, LogOut, Sparkles, LucideIcon } from 'lucide-react';
+import { Home, MessageSquare, Zap, User, LogOut, Sparkles, LucideIcon, Activity } from 'lucide-react';
 import ThemeToggle from '../ui/ThemeToggle';
+import { useApp } from '../../context/AppContext'; //Activity Status
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -21,9 +22,28 @@ interface NavLinkProps {
 const TABS = ['/feed', '/home', '/activities'];
 
 const AppShell: React.FC<AppShellProps> = ({ children, onLogout }) => {
+  const { currentWorkout } = useApp(); //get Current Workout
   const location = useLocation();
   const navigate = useNavigate();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+
+  //Simple timer logic for the Nav Bar
+  useEffect(() => {
+    let interval: any;
+    if (currentWorkout) {
+      interval = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - currentWorkout.startTime) / 1000));
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [currentWorkout]);
+
+  const formatShortTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   // Swipe Logic
   const currentIndex = TABS.indexOf(location.pathname);
@@ -49,6 +69,19 @@ const AppShell: React.FC<AppShellProps> = ({ children, onLogout }) => {
           </div>
           <span className="text-lg font-black tracking-tighter uppercase">Relay</span>
         </div>
+
+        {/*ACTIVE STATUS INDICATOR */}
+        {currentWorkout && (
+          <Link 
+            to="/activities/gym" 
+            className="flex items-center gap-2 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-full animate-pulse shadow-sm shadow-blue-200"
+          >
+            <div className="w-2 h-2 bg-blue-600 rounded-full" />
+            <span className="text-[10px] font-black text-blue-600 uppercase tracking-tighter">
+              LIVE: {formatShortTime(elapsed)}
+            </span>
+          </Link>
+        )}
 
         <div className="flex items-center gap-3">
           <ThemeToggle />
@@ -76,31 +109,40 @@ const AppShell: React.FC<AppShellProps> = ({ children, onLogout }) => {
       </motion.main>
 
       {/* Bottom Nav: Feed | Home (Middle) | Activities */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-[var(--bg)]/80 backdrop-blur-md border-t border-[var(--border)] flex items-center justify-around h-20 pb-4 z-50">
-        <NavLink 
-          to="/feed" 
-          icon={MessageSquare} 
-          active={location.pathname === '/feed'} 
-          label="Feed"
-        />
+      <nav className="fixed bottom-0 left-0 right-0 bg-[var(--bg)]/80 backdrop-blur-md border-t border-[var(--border)] h-20 pb-4 z-50 grid grid-cols-3 items-center">
+        
+        {/* Left Side */}
+        <div className="flex justify-center">
+          <NavLink 
+            to="/feed" 
+            icon={MessageSquare} 
+            active={location.pathname === '/feed'} 
+            label="Feed"
+          />
+        </div>
         
         {/* Middle Home Button */}
-        <Link to="/home" className="relative -top-4">
-          <div className={`p-4 rounded-[24px] shadow-lg transition-all ${
-            location.pathname === '/home' 
-            ? 'bg-[var(--primary)] text-white scale-110' 
-            : 'bg-[var(--bg-card)] text-[var(--text-muted)]'
-          }`}>
-            <Home size={28} strokeWidth={3} />
-          </div>
-        </Link>
+        <div className="flex justify-center">
+          <Link to="/home" className="relative -top-4">
+            <div className={`p-4 rounded-[24px] shadow-lg transition-all ${
+              location.pathname === '/home' 
+              ? 'bg-[var(--primary)] text-white scale-110' 
+              : 'bg-[var(--bg-card)] text-[var(--text-muted)]'
+            }`}>
+              <Home size={28} strokeWidth={3} />
+            </div>
+          </Link>
+        </div>
 
-        <NavLink 
-          to="/activities" 
-          icon={Zap} 
-          active={location.pathname.startsWith('/activities')} 
-          label="Activity"
-        />
+        {/* Right Side */}
+        <div className="flex justify-center">
+          <NavLink 
+            to="/activities" 
+            icon={Zap} 
+            active={location.pathname.startsWith('/activities')} 
+            label="Activities Overview"
+          />
+        </div>
       </nav>
 
       {/* Logout Overlay (Simplified) */}
@@ -130,7 +172,7 @@ const AppShell: React.FC<AppShellProps> = ({ children, onLogout }) => {
 const NavLink: React.FC<NavLinkProps> = ({ to, icon: Icon, active, label }) => (
   <Link 
     to={to} 
-    className={`flex flex-col items-center gap-1 transition-all ${
+    className={`flex flex-col items-center gap-1 transition-all whitespace-nowrap ${
       active ? 'text-[var(--primary)]' : 'text-[var(--text-muted)]'
     }`}
   >

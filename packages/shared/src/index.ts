@@ -42,3 +42,49 @@ export const WorkoutSchema = z.object({
 });
 
 export type Workout = z.infer<typeof WorkoutSchema>;
+
+export interface Exercise {
+  id: string;
+  name: string;
+  muscleGroup: string;
+  instructions?: string;
+}
+
+export interface SetLog {
+  id: string;
+  reps: number;
+  weight: number;
+  isCompleted: boolean;
+}
+
+export interface ExerciseLog {
+  exerciseId: string;
+  exerciseName: string;
+  sets: SetLog[];
+}
+
+export interface WorkoutSession {
+  id: string;
+  startTime: number;
+  endTime?: number; // Add this line (the '?' means it's optional)
+  logs: Array<{
+    exerciseName: string;
+    sets: any[];
+  }>; // I also updated logs so TypeScript knows what's inside
+  status: 'active' | 'completed';
+  module: ActivityModule;
+}
+
+export interface Post {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  content: string;
+  likes: number;
+  timestamp: string;
+  workoutPreview?: {
+    name: string;
+    stats: string;
+  };
+}

@@ -2,6 +2,7 @@ import React from 'react';
 import { HashRouter, MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { AppProvider } from './context/AppContext'; 
 
 import { Home, MessageSquare, Zap, User, LogOut, Sparkles } from 'lucide-react';
 import AppShell from './components/layout/AppShell';
@@ -71,7 +72,9 @@ const App: React.FC = () => {
     <ThemeProvider>
       <AuthProvider>
         <Router>
-          <AppContent />
+          <AppProvider>
+            <AppContent />
+          </AppProvider>
         </Router>
       </AuthProvider>
     </ThemeProvider>
