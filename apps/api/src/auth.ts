@@ -2,7 +2,7 @@ import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { SignupSchema, LoginSchema } from '@relay/shared';
-import { prisma } from './index.ts';
+import { prisma } from './index.js';
 
 const JWT_SECRET = 'dev-secret-123'; // MUST be the same everywhere
 const router = express.Router();

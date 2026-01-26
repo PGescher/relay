@@ -32,7 +32,8 @@ services:
       - "5173:5173"
     volumes:
       - .:/Relay
-    command: pnpm --filter @relay/web dev
+    command: pnpm --filter @relay/web dev --host 0.0.0.0
+
 
   tunnel:
     image: cloudflare/cloudflared
