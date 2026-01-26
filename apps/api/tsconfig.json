@@ -11,7 +11,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@relay/shared": ["../../packages/shared/src/index.ts"]
+      "@relay/shared": ["../../packages/shared/src/notneededindex.ts"]
     }
   },
   "include": ["src/**/*.ts", "prisma.config.ts"]
