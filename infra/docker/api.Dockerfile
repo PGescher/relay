@@ -45,7 +45,8 @@ COPY packages/shared packages/shared
 
 # Build TS -> dist
 #RUN pnpm --filter @relay/api build
-RUN pnpm --filter @relay/api exec tsc -p apps/api/tsconfig.build.json
+RUN pnpm -C apps/api run build
+
 
 
 
