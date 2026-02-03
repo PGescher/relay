@@ -1,49 +1,34 @@
 import { z } from 'zod';
 
-// 1. Signup Validation
+// Auth schemas
 export const SignupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
-// 2. Login Validation
 export const LoginSchema = z.object({
   email: z.string().email(),
   password: z.string(),
 });
 
-// 3. User Persistence
+export type SignupInput = z.infer<typeof SignupSchema>;
+export type LoginInput = z.infer<typeof LoginSchema>;
+
+export type Theme = 'light' | 'dark';
+
 export type User = {
   id: string;
   email: string;
   name: string;
-  theme: 'light' | 'dark';
+  theme: Theme;
 };
 
-export type SignupInput = z.infer<typeof SignupSchema>;
-export type LoginInput = z.infer<typeof LoginSchema>;
-
-// 4. Theme
-export type Theme = 'light' | 'dark';
-
-// Activity Types
+// Activity
 export const ActivityModuleSchema = z.enum(['GYM', 'RUNNING', 'CYCLING']);
 export type ActivityModule = z.infer<typeof ActivityModuleSchema>;
 
-// DB-oriented Workout Schema (optional usage)
-export const WorkoutSchema = z.object({
-  id: z.string().uuid().optional(),
-  userId: z.string(),
-  module: ActivityModuleSchema,
-  startTime: z.date().or(z.string()),
-  endTime: z.date().or(z.string()).optional(),
-  status: z.enum(['ACTIVE', 'COMPLETED', 'CANCELLED']),
-});
-
-export type Workout = z.infer<typeof WorkoutSchema>;
-
-// Exercises
+// Exercise library type
 export interface Exercise {
   id: string;
   name: string;
@@ -51,80 +36,111 @@ export interface Exercise {
   instructions?: string;
 }
 
-// --- Logging / Tracking Types (Module State + Snapshot) ---
-
+// Logging types
 export interface SetLog {
   id: string;
-  setNumber?: number; // optional helper for ordering (UI can compute)
+
   reps: number;
   weight: number;
+
   isCompleted: boolean;
 
-  // Tracking additions (optional, safe for future)
-  completedAt?: number;         // epoch ms when set was checked
-  startedEditingAt?: number;    // epoch ms when user first entered something
-  restPlannedSec?: number;      // planned rest duration (per exercise default)
-  restActualSec?: number;       // actual rest duration (if you track stop)
-  rpe?: number;                 // rating of perceived exertion (0-10)
-  durationSec?: number;         // optional (if you track time-under-tension etc)
+  // timestamps (ms)
+  completedAt?: number;
+  startedEditingAt?: number;
+
+  // rest planning/tracking
+  restPlannedSec?: number;
+  restActualSec?: number;
+
+  // optional future
+  rpe?: number;          // per set (optional)
+  durationSec?: number;  // set duration (optional)
 }
 
 export interface ExerciseLog {
   exerciseId: string;
   exerciseName: string;
-  sets: SetLog[];
 
-  // per-exercise options (optional)
-  restSecDefault?: number;      // planned default rest for this exercise
+  restSecDefault?: number;
   notes?: string;
+
+  sets: SetLog[];
 }
 
-// Event log (append-only) for analytics + debugging
-export type WorkoutEventType =
-  | 'workout_started'
-  | 'exercise_added'
-  | 'exercise_deleted'
-  | 'set_added'
-  | 'set_deleted'
-  | 'set_value_changed'
-  | 'set_completed'
-  | 'set_uncompleted'
-  | 'rest_started'
-  | 'rest_stopped'
-  | 'workout_finished'
-  | 'workout_cancelled';
+export type WorkoutStatus = 'active' | 'completed' | 'cancelled';
 
-export interface WorkoutEvent {
-  id: string;
-  workoutId: string;
-  at: number; // epoch ms
-  type: WorkoutEventType;
-  payload?: Record<string, any>;
-}
-
-// Session object used by UI (your AppContext)
 export interface WorkoutSession {
+  dataVersion: 1;
+
   id: string;
+  module: ActivityModule;
+
+  status: WorkoutStatus;
+
   startTime: number;
   endTime?: number;
 
-  module: ActivityModule;
+  durationSec?: number;
 
-  status: 'active' | 'completed';
-
-  // ✅ upgraded: use ExerciseLog[]
-  logs: ExerciseLog[];
-
-  // optional metadata
+  // template linkage
   templateIdUsed?: string | null;
+
+  // summary metrics
+  totalVolume?: number;
+
+  // post-workout rating
+  rpeOverall?: number;
+
   notes?: string;
 
-  // optional computed/cached metrics
-  totalVolume?: number;
-  durationSec?: number;
+  logs: ExerciseLog[];
 }
 
-// Feed Post type (unchanged)
+// Event stream for audit/debug/analytics
+export type WorkoutEvent = {
+  id: string;
+  workoutId: string;
+  at: number; // ms
+  type:
+    | 'exercise_added'
+    | 'exercise_deleted'
+    | 'set_added'
+    | 'set_deleted'
+    | 'set_value_changed'
+    | 'set_completed'
+    | 'set_uncompleted'
+    | 'rest_started'
+    | 'rest_stopped'
+    | 'workout_finish_opened'
+    | 'workout_finished'
+    | 'workout_cancelled';
+  payload?: Record<string, any>;
+};
+
+// Templates
+export type WorkoutTemplate = {
+  dataVersion: 1;
+
+  id: string;
+  module: ActivityModule;
+
+  name: string;
+
+  createdAt: number;
+  updatedAt: number;
+
+  data: {
+    exercises: Array<{
+      exerciseId: string;
+      exerciseName: string;
+      targetSets: number;
+      restSec: number;
+    }>;
+  };
+};
+
+// Social feed placeholder
 export interface Post {
   id: string;
   userId: string;

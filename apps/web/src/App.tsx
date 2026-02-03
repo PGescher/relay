@@ -16,6 +16,7 @@ import GymDashboard from './features/gym-tracker/GymDashboard';
 import GymHistory from './features/gym-tracker/GymHistory';
 import HomeHub from './features/home/HomeHub';
 import ActiveWorkout from './features/gym-tracker/ActiveWorkout';
+import GymHistoryDetail from './features/gym-tracker/GymHistoryDetails';
 
 // This logic detects if we are in a limited environment (like some web previews)
 const Router = typeof window !== 'undefined' && window.location.protocol === 'blob:' 
@@ -50,6 +51,8 @@ const AppContent: React.FC = () => {
               <Route path="/activities/gym" element={<GymDashboard />} />
               <Route path="/activities/gym/active" element={<ActiveWorkout />} />
               <Route path="/activities/gym/history" element={<GymHistory />} />
+              <Route path="/activities/gym/active" element={<ActiveWorkout />} />
+              <Route path="/activities/gym/history/:id" element={<GymHistoryDetail />} />
               <Route path="/feed" element={<PlaceholderView title="Social Feed" />} />
               <Route path="/settings" element={<PlaceholderView title="Settings" />} />
               <Route path="*" element={<Navigate to="/home" />} />

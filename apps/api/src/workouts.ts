@@ -7,8 +7,9 @@ const router = express.Router();
 
 const CompleteGymWorkoutSchema = z.object({
   workout: z.object({
+    dataVersion: z.literal(1),
     id: z.string(),
-    module: z.string(),
+    module: z.literal('GYM'),
     status: z.literal('completed'),
     startTime: z.number(),
     endTime: z.number(),
@@ -16,6 +17,7 @@ const CompleteGymWorkoutSchema = z.object({
     totalVolume: z.number().optional(),
     templateIdUsed: z.string().nullable().optional(),
     notes: z.string().optional(),
+    rpeOverall: z.number().min(1).max(10).optional(),
     logs: z.array(
       z.object({
         exerciseId: z.string(),
@@ -53,9 +55,7 @@ const CompleteGymWorkoutSchema = z.object({
 
 router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
   const parsed = CompleteGymWorkoutSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'Invalid payload', details: parsed.error.flatten() });
-  }
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid payload', details: parsed.error.flatten() });
 
   const { workout, events, restByExerciseId } = parsed.data;
   if (!req.userId) return res.status(401).json({ error: 'No userId' });
@@ -94,7 +94,7 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
       },
     });
 
-    // requires model WorkoutEvent + migration + generate
+    // If you have WorkoutEvent model:
     await prisma.workoutEvent.createMany({
       data: events.map((e) => ({
         id: e.id,
@@ -110,6 +110,44 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to store workout' });
+  }
+});
+
+// list workouts (returns stored workout payloads from data)
+router.get('/', requireAuth, async (req: AuthedRequest, res) => {
+  const module = String(req.query.module || '');
+  const status = String(req.query.status || '');
+
+  try {
+    const rows = await prisma.workout.findMany({
+      where: {
+        userId: req.userId!,
+        ...(module ? { module } : {}),
+        ...(status ? { status } : {}),
+      },
+      orderBy: { startTime: 'desc' },
+      take: 200,
+    });
+
+    const workouts = rows
+      .map((r) => r.data)
+      .filter(Boolean);
+
+    return res.json({ workouts });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'Failed to list workouts' });
+  }
+});
+
+router.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const row = await prisma.workout.findUnique({ where: { id: req.params.id } });
+    if (!row || row.userId !== req.userId) return res.status(404).json({ error: 'Not found' });
+    return res.json({ workout: row.data });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'Failed to fetch workout' });
   }
 });
 

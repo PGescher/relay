@@ -12,13 +12,11 @@ export function useWorkoutDraftRestore() {
     if (didRun.current) return;
     didRun.current = true;
 
-    // if workout already in memory, nothing to restore
     if (currentWorkout) return;
 
     const draft = loadLastWorkoutDraft();
     if (!draft?.workout) return;
 
-    // restore active-only
     if (draft.workout.status !== 'active') return;
 
     setCurrentWorkout(draft.workout);

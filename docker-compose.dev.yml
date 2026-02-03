@@ -20,7 +20,8 @@ services:
       pnpm config set ignore-scripts false &&
       pnpm install --frozen-lockfile &&
       pnpm rebuild @prisma/engines bcrypt esbuild prisma &&
-      pnpm exec prisma generate &&
+      pnpm exec prisma migrate deploy --schema prisma/schema.prisma &&
+      pnpm exec prisma generate --schema prisma/schema.prisma &&
       pnpm dev
       "
     ports:

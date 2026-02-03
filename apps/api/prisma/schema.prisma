@@ -10,39 +10,53 @@ model User {
   id           String   @id @default(uuid())
   email        String   @unique
   name         String
-  passwordHash String   // Encrypted password
+  passwordHash String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  // Future relationships (ready for later)
-  workouts     Workout[] 
+
+  workouts     Workout[]
+  templates    WorkoutTemplate[]
 }
 
 model Workout {
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id])
-  module    String   // "GYM", "RUNNING", etc.
-  status    String   // "ACTIVE", "COMPLETED"
+  module    String
+  status    String
   startTime DateTime @default(now())
   endTime   DateTime?
-
   data      Json?
 
-  events    WorkoutEvent[]   // ✅ add this line
+  events    WorkoutEvent[]
 
   @@index([userId])
 }
 
-
 model WorkoutEvent {
-  id        String   @id @default(uuid())
+  id        String   @id
   workoutId String
   workout   Workout  @relation(fields: [workoutId], references: [id], onDelete: Cascade)
-
   at        DateTime
   type      String
   payload   Json?
 
   @@index([workoutId])
-  @@index([workoutId, at])
+  @@index([at])
+}
+
+model WorkoutTemplate {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  module    String   // "GYM"
+  name      String
+  data      Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([module])
 }

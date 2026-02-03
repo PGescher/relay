@@ -1,7 +1,7 @@
-import type { Request, Response, NextFunction } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = 'dev-secret-123'; // keep same as auth.ts (later move to env)
+const JWT_SECRET = 'dev-secret-123';
 
 export type AuthedRequest = Request & { userId?: string };
 
