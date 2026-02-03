@@ -1,5 +1,4 @@
-
-import { Exercise, Post } from '@relay/shared';
+import { Exercise } from '@relay/shared';
 
 export const EXERCISES: Exercise[] = [
   { id: '1', name: 'Bench Press', muscleGroup: 'Chest' },
