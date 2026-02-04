@@ -1,6 +1,7 @@
 import express from 'express';
 import { z } from 'zod';
-import { prisma } from './index.js';
+import { prisma } from './prisma.js';
+
 import { requireAuth, type AuthedRequest } from './authMiddleware.js';
 
 const router = express.Router();

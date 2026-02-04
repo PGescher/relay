@@ -6,57 +6,215 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  name         String
-  passwordHash String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+enum WorkoutModule {
+  GYM
+  RUN
+  BIKE
+  SWIM
+  TENNIS
+  PADEL
+}
 
-  workouts     Workout[]
-  templates    WorkoutTemplate[]
+enum UserRole {
+  ADMIN
+  DEVELOPER
+  TESTER
+  USER
+}
+
+enum ExerciseType {
+  strength
+  cardio
+  mobility
+  stretch
+  skill
+}
+
+enum BodyRegion {
+  upper
+  lower
+  full
+  core
+}
+
+enum Equipment {
+  barbell
+  dumbbell
+  machine
+  cable
+  bodyweight
+  kettlebell
+  band
+  cardio_machine
+  other
+}
+
+model User {
+  id String @id @default(uuid())
+
+  // Login / Identität
+  username     String  @unique
+  email        String? @unique
+  displayName  String
+  passwordHash String
+
+  // Rollen/Features
+  role     UserRole @default(USER)
+  // simple + flexibel (später ggf. Feature-Table)
+  features String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workouts         Workout[]
+  workoutTemplates WorkoutTemplate[]
+  exercises        Exercise[]
 }
 
 model Workout {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  module    String
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  module    WorkoutModule
   status    String
-  startTime DateTime @default(now())
+  startTime DateTime      @default(now())
   endTime   DateTime?
-  data      Json?
 
-  events    WorkoutEvent[]
+  // Soft delete (damit du nichts “verlierst”)
+  deletedAt DateTime?
 
-  @@index([userId])
+  // Optional raw snapshot/event-compat
+  data Json?
+
+  // Modul-spezifische 1:1 Details
+  gym WorkoutGym?
+  run WorkoutRun?
+
+  events WorkoutEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, startTime])
+  @@index([module, startTime])
+  @@index([deletedAt])
 }
 
 model WorkoutEvent {
-  id        String   @id
+  id        String  @id @default(uuid())
   workoutId String
-  workout   Workout  @relation(fields: [workoutId], references: [id], onDelete: Cascade)
-  at        DateTime
-  type      String
-  payload   Json?
+  workout   Workout @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+
+  at      DateTime @default(now())
+  type    String
+  payload Json?
 
   @@index([workoutId])
   @@index([at])
 }
 
 model WorkoutTemplate {
-  id        String   @id
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  module    String   // "GYM"
-  name      String
-  data      Json
+  module WorkoutModule
+  name   String
+  data   Json
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([userId, module])
+}
+
+model Exercise {
+  id String @id
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+
+  type        ExerciseType @default(strength)
+  muscleGroup String       @default("Unknown")
+  bodyRegion  BodyRegion   @default(upper)
+
+  equipment        Equipment[] @default([])
+  primaryMuscles   String[]    @default([])
+  secondaryMuscles String[]    @default([])
+
+  isCustom Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  gymUsages WorkoutGymExercise[] // ✅ opposite relation
+
+  @@unique([userId, name])
   @@index([userId])
-  @@index([module])
+}
+
+model WorkoutGym {
+  id        String  @id @default(uuid())
+  workoutId String  @unique
+  workout   Workout @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+
+  notes String?
+
+  exercises WorkoutGymExercise[]
+}
+
+model WorkoutGymExercise {
+  id           String     @id @default(uuid())
+  workoutGymId String
+  workoutGym   WorkoutGym @relation(fields: [workoutGymId], references: [id], onDelete: Cascade)
+
+  exerciseId String
+  exercise   Exercise @relation(fields: [exerciseId], references: [id])
+
+  order Int
+  notes String?
+
+  sets WorkoutGymSet[]
+
+  @@index([workoutGymId])
+  @@index([exerciseId])
+}
+
+model WorkoutGymSet {
+  id                   String             @id @default(uuid())
+  workoutGymExerciseId String
+  workoutGymExercise   WorkoutGymExercise @relation(fields: [workoutGymExerciseId], references: [id], onDelete: Cascade)
+
+  reps   Int?
+  weight Float?
+
+  durationSec Int?
+  distanceM   Int?
+
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+
+  restPlannedSec Int?
+  restActualSec  Int?
+
+  @@index([workoutGymExerciseId])
+  @@index([completedAt])
+}
+
+model WorkoutRun {
+  id        String  @id @default(uuid())
+  workoutId String  @unique
+  workout   Workout @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+
+  distanceM       Int?
+  durationSec     Int?
+  elevationGainM  Int?
+  avgHr           Int?
+  avgPaceSecPerKm Int?
+
+  notes String?
 }

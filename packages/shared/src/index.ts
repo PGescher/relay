@@ -29,11 +29,60 @@ export const ActivityModuleSchema = z.enum(['GYM', 'RUNNING', 'CYCLING']);
 export type ActivityModule = z.infer<typeof ActivityModuleSchema>;
 
 // Exercise library type
+export type ExerciseType =
+  | 'strength'
+  | 'cardio'
+  | 'mobility'
+  | 'stretch'
+  | 'skill';
+
+export type Equipment =
+  | 'barbell'
+  | 'dumbbell'
+  | 'machine'
+  | 'cable'
+  | 'bodyweight'
+  | 'cardio_machine'
+  | 'other';
+
+export type BodyRegion =
+  | 'upper'
+  | 'lower'
+  | 'full'
+  | 'core';
+
+export type Muscle =
+  | 'Chest'
+  | 'Back'
+  | 'Shoulders'
+  | 'Arms'
+  | 'Legs'
+  | 'Abs'
+  | 'Glutes'
+  | 'Quads'
+  | 'Hamstrings'
+  | 'Calves'
+  | 'LowerBack';
+
 export interface Exercise {
   id: string;
   name: string;
+
+  // ✅ ALT (bleibt)
   muscleGroup: string;
-  instructions?: string;
+
+  // 🆕 NEU (optional!)
+  description?: string;
+
+  type?: ExerciseType;
+  equipment?: Equipment[];
+
+  bodyRegion?: BodyRegion;
+
+  primaryMuscles?: Muscle[];
+  secondaryMuscles?: Muscle[];
+
+  isCustom?: boolean;
 }
 
 // Logging types
@@ -77,6 +126,8 @@ export interface WorkoutSession {
   module: ActivityModule;
 
   status: WorkoutStatus;
+
+  updatedAt: number; // ms, whenever workout changes locally (finish sets it too)
 
   startTime: number;
   endTime?: number;

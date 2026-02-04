@@ -1,6 +1,9 @@
 import { defineConfig } from '@prisma/config';
 
 export default defineConfig({
+  migrations: {
+    seed: "pnpm exec tsx prisma/seed.ts",
+  },
   //earlyAccess: true,
   datasource: {
     // For the 'generate' command in Docker, any valid-looking string works.

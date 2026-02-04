@@ -1,6 +1,7 @@
 import express from 'express';
 import { z } from 'zod';
-import { prisma } from './index.js';
+import { prisma } from './prisma.js';
+
 import { requireAuth, type AuthedRequest } from './authMiddleware.js';
 
 const router = express.Router();
@@ -65,53 +66,125 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
   }
 
   try {
-    const saved = await prisma.workout.upsert({
-      where: { id: workout.id },
-      update: {
-        userId: req.userId,
-        module: workout.module,
-        status: 'COMPLETED',
-        startTime: new Date(workout.startTime),
-        endTime: new Date(workout.endTime),
-        data: {
-          ...workout,
-          restByExerciseId: restByExerciseId ?? {},
-          storedAt: Date.now(),
+    const result = await prisma.$transaction(async (tx) => {
+      // 1) Base workout upsert (keep JSON snapshot for backward compatibility)
+      const savedWorkout = await tx.workout.upsert({
+        where: { id: workout.id },
+        update: {
+          userId: req.userId!,
+          module: workout.module,          // 'GYM' matches enum name
+          status: 'COMPLETED',
+          startTime: new Date(workout.startTime),
+          endTime: new Date(workout.endTime),
+          deletedAt: null,
+          data: {
+            ...workout,
+            restByExerciseId: restByExerciseId ?? {},
+            storedAt: Date.now(),
+          },
         },
-      },
-      create: {
-        id: workout.id,
-        userId: req.userId,
-        module: workout.module,
-        status: 'COMPLETED',
-        startTime: new Date(workout.startTime),
-        endTime: new Date(workout.endTime),
-        data: {
-          ...workout,
-          restByExerciseId: restByExerciseId ?? {},
-          storedAt: Date.now(),
+        create: {
+          id: workout.id,
+          userId: req.userId!,
+          module: workout.module,
+          status: 'COMPLETED',
+          startTime: new Date(workout.startTime),
+          endTime: new Date(workout.endTime),
+          data: {
+            ...workout,
+            restByExerciseId: restByExerciseId ?? {},
+            storedAt: Date.now(),
+          },
         },
-      },
+      });
+
+      // 2) Ensure WorkoutGym (1:1)
+      const gym = await tx.workoutGym.upsert({
+        where: { workoutId: savedWorkout.id },
+        update: { notes: workout.notes ?? null },
+        create: { workoutId: savedWorkout.id, notes: workout.notes ?? null },
+      });
+
+      // 3) Create/ensure exercises exist (stubs if missing)
+      // NOTE: if you want custom exercises per user, you can set userId/isCustom based on prefix ex_custom_
+      for (const log of workout.logs) {
+        await tx.exercise.upsert({
+          where: { id: log.exerciseId },
+          update: {
+            // keep name in sync (optional)
+            name: log.exerciseName,
+          },
+          create: {
+            id: log.exerciseId,
+            name: log.exerciseName,
+            // optional: if id looks custom, attach to user
+            userId: log.exerciseId.startsWith('ex_custom_') ? req.userId! : null,
+            isCustom: log.exerciseId.startsWith('ex_custom_'),
+            // the rest uses defaults from schema
+          },
+        });
+      }
+
+      // 4) Replace gym exercises+sets for this workout (idempotent save)
+      // easiest: delete previous and recreate (since workout is "completed")
+      await tx.workoutGymSet.deleteMany({
+        where: { workoutGymExercise: { workoutGymId: gym.id } },
+      });
+      await tx.workoutGymExercise.deleteMany({
+        where: { workoutGymId: gym.id },
+      });
+
+      // 5) Insert exercises + sets
+      for (let i = 0; i < workout.logs.length; i++) {
+        const log = workout.logs[i];
+
+        const gymEx = await tx.workoutGymExercise.create({
+          data: {
+            workoutGymId: gym.id,
+            exerciseId: log.exerciseId,
+            order: i + 1,
+            notes: log.notes ?? null,
+          },
+        });
+
+        if (log.sets?.length) {
+          await tx.workoutGymSet.createMany({
+            data: log.sets.map((s) => ({
+              workoutGymExerciseId: gymEx.id,
+              reps: s.reps ?? null,
+              weight: s.weight ?? null,
+              durationSec: s.durationSec ?? null,
+              isCompleted: s.isCompleted ?? false,
+              completedAt: s.completedAt ? new Date(s.completedAt) : null,
+              restPlannedSec: s.restPlannedSec ?? null,
+              restActualSec: s.restActualSec ?? null,
+            })),
+          });
+        }
+      }
+
+      // 6) Events (append-only, skip duplicates)
+      await tx.workoutEvent.createMany({
+        data: events.map((e) => ({
+          id: e.id,
+          workoutId: workout.id,
+          at: new Date(e.at),
+          type: e.type,
+          payload: e.payload ?? undefined,
+        })),
+        skipDuplicates: true,
+      });
+
+      return savedWorkout;
     });
 
-    // If you have WorkoutEvent model:
-    await prisma.workoutEvent.createMany({
-      data: events.map((e) => ({
-        id: e.id,
-        workoutId: workout.id,
-        at: new Date(e.at),
-        type: e.type,
-        payload: e.payload ?? undefined,
-      })),
-      skipDuplicates: true,
-    });
-
-    return res.json({ ok: true, workoutId: saved.id });
+    return res.json({ ok: true, workoutId: result.id });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to store workout' });
   }
 });
+
 
 // list workouts (returns stored workout payloads from data)
 router.get('/', requireAuth, async (req: AuthedRequest, res) => {

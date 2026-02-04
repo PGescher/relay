@@ -6,7 +6,7 @@ import type { WorkoutSession } from '@relay/shared';
 import ActiveWorkout from './ActiveWorkout';
 import GymHistory from './GymHistory';
 import GymTemplates from './GymTemplates';
-import GymAnalytics from './GymAnalytics';
+import GymAnalytics from './AnalyticsPanel';
 import GymImportExport from './GymImportExport';
 import { useWorkoutDraftRestore } from './useWorkoutDraftRestore';
 
