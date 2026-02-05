@@ -1,44 +1,7 @@
 /* src/styles/theme.css */
 
-/* ---------------- DARK(Default) ---------------- */
+/* ---------------- LIGHT(Default) ---------------- */
 :root {
-  --bg: #0a0000;
-  --text: rgba(255, 255, 255, 0.95);
-
-  --bg-card: rgba(255, 255, 255, 0.06);
-  --bg-card-strong: rgba(255, 255, 255, 0.10);
-
-  --glass: rgba(255, 255, 255, 0.06);
-  --glass-strong: rgba(255, 255, 255, 0.09);
-
-  --border: rgba(255, 255, 255, 0.10);
-
-  --text-muted: rgba(255, 255, 255, 0.45);
-
-  --primary: #68001a;
-  --primary-soft: rgba(104, 0, 26, 0.24);
-
-  --glow: rgba(255, 255, 255, 0.06);
-
-  --hero-bg: #0a0000;
-  --hero-text: rgba(255, 255, 255, 0.95);
-
-  --glow-1: rgba(128, 0, 32, 0.35);
-  --glow-2: rgba(48, 0, 10, 0.22);
-
-  --cta: #800020;
-  --cta-hover: #a8002d;
-  --cta-shadow: rgba(128, 0, 32, 0.45);
-
-  /* gym-tracker */
-  --gym: #800020;
-  --gym-hover: #a8002d;
-  --gym-soft: rgba(128, 0, 32, 0.25);
-}
-
-
-/* ---------------- LIGHT ---------------- */
-html.dark {
   /* Base */
   --bg: #ffffff;                 /* keep it crisp */
   --text: #111827;               /* your old text */
@@ -80,6 +43,45 @@ html.dark {
   --gym: #800020;
   --gym-hover: #a8002d;
   --gym-soft: rgba(128, 0, 32, 0.25);
+}
+
+
+/* ---------------- DARK ---------------- */
+html.dark {
+  --bg: #0a0000;
+  --text: rgba(255, 255, 255, 0.95);
+
+  --bg-card: rgba(255, 255, 255, 0.06);
+  --bg-card-strong: rgba(255, 255, 255, 0.10);
+
+  --glass: rgba(255, 255, 255, 0.06);
+  --glass-strong: rgba(255, 255, 255, 0.09);
+
+  --border: rgba(255, 255, 255, 0.10);
+
+  --text-muted: rgba(255, 255, 255, 0.45);
+
+  --primary: #68001a;
+  --primary-soft: rgba(104, 0, 26, 0.24);
+
+  --glow: rgba(255, 255, 255, 0.06);
+
+  --hero-bg: #0a0000;
+  --hero-text: rgba(255, 255, 255, 0.95);
+
+  --glow-1: rgba(128, 0, 32, 0.35);
+  --glow-2: rgba(48, 0, 10, 0.22);
+
+  --cta: #800020;
+  --cta-hover: #a8002d;
+  --cta-shadow: rgba(128, 0, 32, 0.45);
+
+  /* gym-tracker */
+  --gym: #800020;
+  --gym-hover: #a8002d;
+  --gym-soft: rgba(128, 0, 32, 0.25);
+
+  
 }
 
 

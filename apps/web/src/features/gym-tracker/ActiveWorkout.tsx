@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import { EXERCISES } from './constants';
-import { Plus, Check, ChevronDown, X, Timer, Trash2, Save } from 'lucide-react';
+import { Plus, Check, ChevronDown, ChevronUp, X, Timer, Trash2, Save } from 'lucide-react';
+
 import type { ExerciseLog, SetLog, WorkoutEvent, WorkoutSession, WorkoutTemplate } from '@relay/shared';
 import { saveWorkoutDraft, clearWorkoutDraft, loadLastWorkoutDraft } from './workoutDraft';
 import { FinishWorkoutModal } from './FinishWorkoutModal';
@@ -13,6 +14,17 @@ import { apiPushGymComplete } from '../../data/apiClient';
 import { enqueuePending } from '../../data/sync/pendingQueue';
 import { upsertWorkouts } from '../../data/workoutCache';
 import { syncNow } from '../../data/sync/syncManager';
+
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+function arrayMove<T>(arr: T[], from: number, to: number): T[] {
+  if (from === to) return arr;
+  const copy = [...arr];
+  const [item] = copy.splice(from, 1);
+  copy.splice(to, 0, item);
+  return copy;
+}
+
 
 
 
@@ -330,6 +342,25 @@ const ActiveWorkout: React.FC = () => {
     appendEvent('exercise_added', { exerciseId: exercise.id, name: exercise.name });
     setShowExercisePicker(false);
   };
+
+  function arrayMove<T>(arr: T[], from: number, to: number): T[] {
+    if (from === to) return arr;
+    const copy = [...arr];
+    const [item] = copy.splice(from, 1);
+    copy.splice(to, 0, item);
+    return copy;
+  }
+
+  const moveExercise = (from: number, to: number) => {
+    if (!currentWorkout) return;
+    if (to < 0 || to >= currentWorkout.logs.length) return;
+    setCurrentWorkout({
+      ...currentWorkout,
+      logs: arrayMove(currentWorkout.logs, from, to),
+      updatedAt: Date.now(),
+    });
+  };
+
 
   const deleteExercise = (exerciseIndex: number) => {
     if (!currentWorkout) return;
@@ -815,7 +846,25 @@ const ActiveWorkout: React.FC = () => {
                         aria-label="Delete exercise"
                       >
                         <Trash2 size={14} />
-                        Delete
+                      </button>
+
+
+                      <button
+                        type="button"
+                        onClick={() => moveExercise(exIndex, exIndex - 1)}
+                        disabled={exIndex === 0}
+                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+                      >
+                        <ChevronUp size={14} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => moveExercise(exIndex, exIndex + 1)}
+                        disabled={exIndex === currentWorkout.logs.length - 1}
+                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+                      >
+                        <ChevronDown size={14} />
                       </button>
                     </div>
                   </div>
