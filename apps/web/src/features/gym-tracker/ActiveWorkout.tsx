@@ -1,21 +1,30 @@
+// apps/web/src/modules/gym/ActiveWorkout.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useApp } from '../../context/AppContext';
-import { EXERCISES } from './constants';
-import { Plus, Check, ChevronDown, ChevronUp, X, Timer, Trash2, Save } from 'lucide-react';
+import { Plus, Check, X, Timer, Trash2, ListOrdered, ChevronUp, ChevronDown } from 'lucide-react';
+import { AnimatePresence, Reorder, motion } from 'framer-motion';
 
+import { useApp } from '../../context/AppContext';
+import { useAuth } from '../../context/AuthContext';
+
+import { EXERCISES } from './constants';
 import type { ExerciseLog, SetLog, WorkoutEvent, WorkoutSession, WorkoutTemplate } from '@relay/shared';
+
 import { saveWorkoutDraft, clearWorkoutDraft, loadLastWorkoutDraft } from './workoutDraft';
 import { FinishWorkoutModal } from './FinishWorkoutModal';
 import { ExerciseLibraryModal } from './ExerciseLibraryModal';
 
-import { useAuth } from '../../context/AuthContext';
 import { apiPushGymComplete } from '../../data/apiClient';
 import { enqueuePending } from '../../data/sync/pendingQueue';
 import { upsertWorkouts } from '../../data/workoutCache';
 import { syncNow } from '../../data/sync/syncManager';
 
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+// ---------------------------
+// Helpers
+// ---------------------------
+const REST_STORAGE_KEY = 'relay:gym:restByExerciseId:v1';
+
+const uid = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function arrayMove<T>(arr: T[], from: number, to: number): T[] {
   if (from === to) return arr;
@@ -24,13 +33,6 @@ function arrayMove<T>(arr: T[], from: number, to: number): T[] {
   copy.splice(to, 0, item);
   return copy;
 }
-
-
-
-
-const REST_STORAGE_KEY = 'relay:gym:restByExerciseId:v1';
-
-const uid = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
 const formatMMSS = (seconds: number) => {
   const m = Math.floor(seconds / 60);
@@ -53,21 +55,459 @@ type SwipeState = {
 };
 
 const SWIPE_DELETE_PX = 70;
-
 type IncompletePolicy = 'delete' | 'complete' | 'keep';
 
+type ExerciseLogWithId = ExerciseLog & { logId: string };
+
+function ensureLogIds(logs: ExerciseLog[]): ExerciseLogWithId[] {
+  return logs.map((l, idx) => {
+    const anyL = l as any;
+    const logId =
+      typeof anyL.logId === 'string' && anyL.logId.length ? anyL.logId : `${l.exerciseId}-${idx}-${uid()}`;
+    return { ...(l as any), logId } as ExerciseLogWithId;
+  });
+}
+
+// ---------------------------
+// ExerciseCard
+// ---------------------------
+type ExerciseCardProps = {
+  log: ExerciseLogWithId;
+  exIndex: number;
+
+  deleteExercise: (exerciseIndex: number) => void;
+
+  addSet: (exerciseIndex: number) => void;
+  deleteSetConfirmed: (exerciseIndex: number, setIndex: number) => void;
+
+  updateSet: (exerciseIndex: number, setIndex: number, data: Partial<SetLog>) => void;
+  toggleComplete: (exerciseIndex: number, setIndex: number) => void;
+
+  getRestForExercise: (exerciseId: string) => number;
+  setRestConfigForExerciseId: React.Dispatch<React.SetStateAction<string | null>>;
+
+  formatGhost: (exerciseId: string, setIndex: number) => string;
+  getGhost: (exerciseId: string, setIndex: number) => { weight?: number; reps?: number };
+
+  swipeRef: React.MutableRefObject<Record<string, SwipeState>>;
+
+  // rest + anchor
+  restRunning: boolean;
+  restRemaining: number;
+  restTotal: number;
+  restAnchor: { logId: string; setId: string } | null;
+
+  // rest controls
+  stopRest: () => void;
+  addRest: (delta: number) => void;
+};
+
+const ExerciseCard: React.FC<ExerciseCardProps> = (props) => {
+  const {
+    log,
+    exIndex,
+    deleteExercise,
+    addSet,
+    deleteSetConfirmed,
+    updateSet,
+    toggleComplete,
+    getRestForExercise,
+    setRestConfigForExerciseId,
+    formatGhost,
+    getGhost,
+    swipeRef,
+    restRunning,
+    restRemaining,
+    restTotal,
+    restAnchor,
+    stopRest,
+    addRest,
+  } = props;
+
+  const restForThis = getRestForExercise(log.exerciseId);
+
+  // double-tap confirm state for delete-set
+  const [armedDeleteKey, setArmedDeleteKey] = useState<string | null>(null);
+  const armTimerRef = useRef<number | null>(null);
+
+  const disarm = () => {
+    setArmedDeleteKey(null);
+    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    armTimerRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => {
+      if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    };
+  }, []);
+
+  const armDelete = (key: string) => {
+    setArmedDeleteKey(key);
+    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    armTimerRef.current = window.setTimeout(() => {
+      setArmedDeleteKey((cur) => (cur === key ? null : cur));
+      armTimerRef.current = null;
+    }, 1200);
+  };
+
+  const isAnchoredExercise = restRunning && restAnchor?.logId === log.logId;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+      className="rounded-3xl border border-[var(--border)] bg-[var(--glass)] backdrop-blur-xl p-5 overflow-hidden"
+      onPointerDown={() => {
+        if (armedDeleteKey) disarm();
+      }}
+    >
+      <div className="flex justify-between items-start mb-4 gap-4">
+        <div className="min-w-0">
+          <h3 className="font-black italic text-lg truncate">{log.exerciseName}</h3>
+
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              data-no-drag
+              onClick={(e) => {
+                e.stopPropagation();
+                setRestConfigForExerciseId(log.exerciseId);
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+            >
+              <Timer size={14} />
+              Rest {formatMMSS(restForThis)}
+            </button>
+
+            <button
+              type="button"
+              data-no-drag
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteExercise(exIndex);
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-red-500 hover:border-red-500 transition-colors"
+              aria-label="Delete exercise"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {/* 7 cols: Set | Prev(2) | Weight | Reps | Done | Del */}
+        <div className="grid grid-cols-7 gap-2 px-2 text-[10px] font-black uppercase text-[var(--text-muted)]">
+          <span>Set</span>
+          <span className="col-span-2">Prev</span>
+          <span>Weight</span>
+          <span>Reps</span>
+          <span className="text-center">Done</span>
+          <span className="text-center">Del</span>
+        </div>
+
+        {log.sets.map((set, setIndex) => {
+          const completed = !!set.isCompleted;
+          const ghostLabel = formatGhost(log.exerciseId, setIndex);
+          const g = getGhost(log.exerciseId, setIndex);
+          const key = set.id;
+
+          const isAnchoredSet = restRunning && restAnchor?.logId === log.logId && restAnchor?.setId === set.id;
+          const isArmed = armedDeleteKey === key;
+
+          const onTouchStart: React.TouchEventHandler<HTMLDivElement> = (e) => {
+            const t = e.touches[0];
+            swipeRef.current[key] = { startX: t.clientX, startY: t.clientY, swiping: false, triggered: false };
+          };
+
+          const onTouchMove: React.TouchEventHandler<HTMLDivElement> = (e) => {
+            const st = swipeRef.current[key];
+            if (!st) return;
+            const t = e.touches[0];
+            const dx = t.clientX - st.startX;
+            const dy = t.clientY - st.startY;
+
+            if (!st.swiping) {
+              if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) st.swiping = true;
+            }
+            if (st.swiping && !st.triggered && dx < -SWIPE_DELETE_PX) {
+              st.triggered = true;
+              deleteSetConfirmed(exIndex, setIndex);
+              disarm();
+            }
+          };
+
+          const onTouchEnd: React.TouchEventHandler<HTMLDivElement> = () => {
+            delete swipeRef.current[key];
+          };
+
+          return (
+            <div
+              key={set.id}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+              className={[
+                'grid grid-cols-7 gap-2 items-center p-2 rounded-xl transition-colors',
+                completed ? 'bg-[var(--primary-soft)]' : 'bg-transparent',
+              ].join(' ')}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <span className="font-black text-sm">{setIndex + 1}</span>
+
+              <span className="col-span-2 text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] truncate">
+                {ghostLabel || '—'}
+              </span>
+
+              <input
+                data-no-drag
+                inputMode="decimal"
+                value={set.weight === 0 ? '' : String(set.weight)}
+                placeholder={g.weight != null ? String(g.weight) : '0'}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(',', '.');
+                  const cleaned = raw.replace(/[^0-9.]/g, '');
+                  const num = cleaned === '' ? 0 : Number(cleaned);
+                  updateSet(exIndex, setIndex, { weight: Number.isFinite(num) ? num : 0 });
+                }}
+                className="rounded-lg p-2 text-xs font-bold text-center w-full bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]"
+              />
+
+              <input
+                data-no-drag
+                inputMode="numeric"
+                value={set.reps === 0 ? '' : String(set.reps)}
+                placeholder={g.reps != null ? String(g.reps) : '0'}
+                onChange={(e) => {
+                  const cleaned = e.target.value.replace(/[^0-9]/g, '');
+                  const num = cleaned === '' ? 0 : parseInt(cleaned, 10);
+                  updateSet(exIndex, setIndex, { reps: Number.isFinite(num) ? num : 0 });
+                }}
+                className="rounded-lg p-2 text-xs font-bold text-center w-full bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]"
+              />
+
+              {/* Done with countdown badge */}
+              <div className="relative flex justify-center">
+                <button
+                  data-no-drag
+                  type="button"
+                  onClick={() => toggleComplete(exIndex, setIndex)}
+                  className={[
+                    'relative flex justify-center items-center h-10 w-10 rounded-xl transition-all border',
+                    completed
+                      ? 'bg-[var(--primary)] text-white border-white/10'
+                      : 'bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--primary)] hover:border-[var(--primary)]',
+                  ].join(' ')}
+                  aria-label="Toggle set completed"
+                >
+                  <Check size={18} />
+                  {isAnchoredSet && (
+                    <span className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full bg-[var(--primary)] text-white text-[10px] font-black shadow tabular-nums">
+                      {formatMMSS(restRemaining)}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Delete set double tap confirm */}
+              <button
+                data-no-drag
+                type="button"
+                onClick={() => {
+                  if (isArmed) {
+                    deleteSetConfirmed(exIndex, setIndex);
+                    disarm();
+                    return;
+                  }
+                  armDelete(key);
+                }}
+                className={[
+                  'flex justify-center items-center h-10 w-10 mx-auto rounded-xl transition-all border',
+                  isArmed
+                    ? 'bg-red-500/15 text-red-500 border-red-500'
+                    : 'bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border)] hover:text-red-500 hover:border-red-500',
+                ].join(' ')}
+                aria-label={isArmed ? 'Tap again to confirm delete' : 'Delete set'}
+                title={isArmed ? 'Tap again to confirm' : 'Delete'}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Inline rest bar under exercise (only for anchored exercise) */}
+      {isAnchoredExercise && (
+        <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+          <div className="px-4 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Timer size={16} className="text-[var(--primary)]" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Rest</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                data-no-drag
+                type="button"
+                onClick={() => addRest(-30)}
+                className="px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+              >
+                -30
+              </button>
+
+              <span className="text-xl font-black italic text-[var(--primary)] tabular-nums min-w-[64px] text-center">
+                {formatMMSS(restRemaining)}
+              </span>
+
+              <button
+                data-no-drag
+                type="button"
+                onClick={() => addRest(+30)}
+                className="px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+              >
+                +30
+              </button>
+
+              <button
+                data-no-drag
+                type="button"
+                onClick={stopRest}
+                className="w-10 h-10 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-red-500 hover:border-red-500 transition-colors"
+                aria-label="Cancel rest"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="h-2 bg-[var(--bg)] border-t border-[var(--border)]">
+            <div
+              className="h-full bg-[var(--primary)]"
+              style={{ width: `${restTotal > 0 ? (restRemaining / restTotal) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      <button
+        data-no-drag
+        type="button"
+        onClick={() => addSet(exIndex)}
+        className="w-full mt-4 border-2 border-dashed border-[var(--border)] p-3 rounded-xl text-[var(--text-muted)] font-black text-xs uppercase tracking-widest hover:border-[var(--primary)] hover:text-[var(--primary)] transition-all"
+      >
+        + ADD SET
+      </button>
+    </motion.div>
+  );
+};
+
+// ---------------------------
+// Reorder Overview Row
+// ---------------------------
+type OverviewRowProps = {
+  id: string;
+  log: ExerciseLogWithId;
+  pos: number;
+  count: number;
+
+  onDeleteAtLogIndex: (logIndex: number) => void;
+  logIndex: number;
+
+  onMovePos: (fromPos: number, toPos: number) => void;
+};
+
+const OverviewRow: React.FC<OverviewRowProps> = ({ id, log, pos, count, onDeleteAtLogIndex, logIndex, onMovePos }) => {
+  const done = log.sets.filter((s) => s.isCompleted).length;
+  const total = log.sets.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  return (
+    <Reorder.Item
+      value={id}
+      whileDrag={{ scale: 1.01, zIndex: 999, boxShadow: '0 22px 60px rgba(0,0,0,0.35)' }}
+      transition={{ type: 'spring', stiffness: 380, damping: 34 }}
+      className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden touch-none"
+      style={{ touchAction: 'none' }}
+    >
+      <div className="flex items-center gap-3 px-3 h-14">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
+              {pos + 1}/{count}
+            </span>
+            <h3 className="font-black italic text-xs truncate">{log.exerciseName}</h3>
+          </div>
+
+          <div className="mt-1 flex items-center gap-2">
+            <span className="text-[10px] font-black text-[var(--text-muted)]">
+              {done}/{total}
+            </span>
+            <div className="h-1.5 flex-1 bg-[var(--bg)] rounded-full overflow-hidden border border-[var(--border)]">
+              <div className="h-full bg-[var(--primary)]" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          data-no-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onMovePos(pos, pos - 1)}
+          disabled={pos === 0}
+          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+          aria-label="Move up"
+        >
+          <ChevronUp size={16} />
+        </button>
+
+        <button
+          type="button"
+          data-no-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onMovePos(pos, pos + 1)}
+          disabled={pos === count - 1}
+          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+          aria-label="Move down"
+        >
+          <ChevronDown size={16} />
+        </button>
+
+        <button
+          type="button"
+          data-no-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onDeleteAtLogIndex(logIndex)}
+          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-red-500 hover:border-red-500 transition-colors"
+          aria-label="Delete exercise"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    </Reorder.Item>
+  );
+};
+
+// ---------------------------
+// Main Component
+// ---------------------------
 const ActiveWorkout: React.FC = () => {
   const { currentWorkout, setCurrentWorkout, setWorkoutHistory, workoutHistory } = useApp();
   const navigate = useNavigate();
-
   const { user, token } = useAuth();
 
   const [timer, setTimer] = useState(0);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
 
+  // Reorder mode (overlay inside content, keeps AppShell + bottom nav visible)
+  const [showReorderTab, setShowReorderTab] = useState(false);
+  const reorderScrollRef = useRef<HTMLDivElement | null>(null);
+
   // In-memory events
   const [events, setEvents] = useState<WorkoutEvent[]>([]);
-
   const appendEvent = (type: WorkoutEvent['type'], payload?: WorkoutEvent['payload']) => {
     if (!currentWorkout) return;
     const ev: WorkoutEvent = {
@@ -80,12 +520,13 @@ const ActiveWorkout: React.FC = () => {
     setEvents((prev) => [ev, ...prev]);
   };
 
-  // Rest countdown state
+  // Rest countdown (inline only)
   const [restRemaining, setRestRemaining] = useState<number>(0);
   const [restTotal, setRestTotal] = useState<number>(0);
   const [restRunning, setRestRunning] = useState<boolean>(false);
   const restIntervalRef = useRef<number | null>(null);
   const restStartedAtRef = useRef<number | null>(null);
+  const [restAnchor, setRestAnchor] = useState<{ logId: string; setId: string } | null>(null);
 
   // Per-exercise rest config persisted
   const DEFAULT_REST = 120;
@@ -97,12 +538,12 @@ const ActiveWorkout: React.FC = () => {
 
   // Finish modal
   const [showFinish, setShowFinish] = useState(false);
-  const [incompletePolicy, setIncompletePolicy] = useState<IncompletePolicy>('delete');
-  const [rpeOverall, setRpeOverall] = useState<number>(8);
-  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
-  const [templateName, setTemplateName] = useState('');
-  const [updateTemplate, setUpdateTemplate] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [incompletePolicy, setIncompletePolicy] = useState<IncompletePolicy>('delete');
+  const [incompleteCount, setIncompleteCount] = useState(0);
+
+  // Reorder: stable list of ids
+  const [order, setOrder] = useState<string[]>([]);
 
   // Restore draft ONCE if someone lands here without memory state
   useEffect(() => {
@@ -116,7 +557,6 @@ const ActiveWorkout: React.FC = () => {
       return;
     }
 
-    // no workout at all → back
     navigate('/activities/gym', { replace: true });
   }, [currentWorkout, setCurrentWorkout, navigate]);
 
@@ -140,6 +580,31 @@ const ActiveWorkout: React.FC = () => {
       // ignore
     }
   }, [restByExerciseId]);
+
+  // Ensure logIds + init order on workout switch
+  useEffect(() => {
+    if (!currentWorkout) return;
+
+    const withIds = ensureLogIds(currentWorkout.logs);
+    const changed = withIds.some((l, i) => (currentWorkout.logs[i] as any)?.logId !== l.logId);
+    if (changed) {
+      setCurrentWorkout({ ...currentWorkout, logs: withIds });
+      return;
+    }
+
+    const ids = withIds.map((l) => l.logId);
+    setOrder((prev) => {
+      if (!prev.length) return ids;
+
+      // keep existing order where possible, add missing ids at end
+      const prevSet = new Set(prev);
+      const kept = prev.filter((id) => ids.includes(id));
+      const merged = [...kept];
+      for (const id of ids) if (!prevSet.has(id)) merged.push(id);
+      return merged;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWorkout?.id]);
 
   // Workout timer
   useEffect(() => {
@@ -169,6 +634,7 @@ const ActiveWorkout: React.FC = () => {
             appendEvent('rest_stopped', { actualSec });
           }
           restStartedAtRef.current = null;
+          setRestAnchor(null);
           return 0;
         }
         return prev - 1;
@@ -194,6 +660,7 @@ const ActiveWorkout: React.FC = () => {
     setRestRunning(false);
     setRestRemaining(0);
     setRestTotal(0);
+    setRestAnchor(null);
 
     if (restIntervalRef.current) window.clearInterval(restIntervalRef.current);
     restIntervalRef.current = null;
@@ -205,6 +672,20 @@ const ActiveWorkout: React.FC = () => {
     }
     restStartedAtRef.current = null;
   };
+
+  const addRest = (delta: number) => {
+    if (!restRunning) return;
+    setRestRemaining((r) => Math.max(0, r + delta));
+    setRestTotal((t) => Math.max(0, t + delta));
+  };
+
+  // Scroll reorder to top on open (smooth/no jump)
+  useEffect(() => {
+    if (!showReorderTab) return;
+    requestAnimationFrame(() => {
+      reorderScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' as any });
+    });
+  }, [showReorderTab]);
 
   // --- Ghost lookup from latest completed workout per exerciseId ---
   const lastLogByExerciseId = useMemo(() => {
@@ -241,6 +722,25 @@ const ActiveWorkout: React.FC = () => {
     setRestByExerciseId((prev) => (prev[exerciseId] ? prev : { ...prev, [exerciseId]: DEFAULT_REST }));
   };
 
+  // Reorder apply (strings -> logs reorder)
+  const applyOrderToWorkout = (nextOrder: string[]) => {
+    if (!currentWorkout) return;
+
+    const logsWithIds = ensureLogIds(currentWorkout.logs);
+    const byId = new Map<string, ExerciseLogWithId>();
+    for (const l of logsWithIds) byId.set(l.logId, l);
+
+    const nextLogs: ExerciseLogWithId[] = [];
+    for (const id of nextOrder) {
+      const log = byId.get(id);
+      if (log) nextLogs.push(log);
+    }
+    for (const l of logsWithIds) if (!nextOrder.includes(l.logId)) nextLogs.push(l);
+
+    setOrder(nextOrder);
+    setCurrentWorkout({ ...currentWorkout, logs: nextLogs, updatedAt: Date.now() });
+  };
+
   const updateSet = (exerciseIndex: number, setIndex: number, data: Partial<SetLog>) => {
     if (!currentWorkout) return;
 
@@ -249,10 +749,11 @@ const ActiveWorkout: React.FC = () => {
 
     const now = Date.now();
     const startedEditingAt =
-      (data.weight != null || data.reps != null) && !current.startedEditingAt ? now : current.startedEditingAt;
+      (data.weight != null || data.reps != null) && !(current as any).startedEditingAt
+        ? now
+        : (current as any).startedEditingAt;
 
-    newLogs[exerciseIndex].sets[setIndex] = { ...current, ...data, startedEditingAt };
-
+    newLogs[exerciseIndex].sets[setIndex] = { ...(current as any), ...data, startedEditingAt } as any;
     setCurrentWorkout({ ...currentWorkout, logs: newLogs });
 
     appendEvent('set_value_changed', {
@@ -290,17 +791,12 @@ const ActiveWorkout: React.FC = () => {
       const completed = sets.filter((s: any) => s?.isCompleted);
       const source = completed.length ? completed : sets;
 
-      // Map sets; keep same count as last time
       const mapped = source.map((s: any) => ({
         reps: typeof s?.reps === 'number' ? s.reps : 0,
         weight: typeof s?.weight === 'number' ? s.weight : 0,
       }));
 
-      // Only treat it as "done before" if there is at least some signal
-      const hasSignal =
-        completed.length > 0 ||
-        mapped.some((s) => (s.reps ?? 0) !== 0 || (s.weight ?? 0) !== 0);
-
+      const hasSignal = completed.length > 0 || mapped.some((s) => (s.reps ?? 0) !== 0 || (s.weight ?? 0) !== 0);
       if (hasSignal) return mapped;
     }
 
@@ -309,7 +805,6 @@ const ActiveWorkout: React.FC = () => {
 
   const buildPrefilledSetLogs = (exerciseId: string, plannedRestSec: number): SetLog[] => {
     const last = getLastCompletedSetsForExercise(exerciseId);
-
     const base = last?.length ? last : [{ reps: 0, weight: 0 }];
 
     return base.map((s) => ({
@@ -321,17 +816,16 @@ const ActiveWorkout: React.FC = () => {
     }));
   };
 
-
   const addExercise = (exerciseId: string) => {
     if (!currentWorkout) return;
     const exercise = EXERCISES.find((e) => e.id === exerciseId);
     if (!exercise) return;
 
     ensureRestEntry(exercise.id);
-
     const planned = getRestForExercise(exercise.id);
 
-    const newLog: ExerciseLog = {
+    const newLog: ExerciseLogWithId = {
+      logId: uid(),
       exerciseId: exercise.id,
       exerciseName: exercise.name,
       restSecDefault: planned,
@@ -339,37 +833,35 @@ const ActiveWorkout: React.FC = () => {
     };
 
     setCurrentWorkout({ ...currentWorkout, logs: [...currentWorkout.logs, newLog] });
+    setOrder((prev) => [...prev, newLog.logId]);
+
     appendEvent('exercise_added', { exerciseId: exercise.id, name: exercise.name });
     setShowExercisePicker(false);
   };
 
-  function arrayMove<T>(arr: T[], from: number, to: number): T[] {
-    if (from === to) return arr;
-    const copy = [...arr];
-    const [item] = copy.splice(from, 1);
-    copy.splice(to, 0, item);
-    return copy;
-  }
-
-  const moveExercise = (from: number, to: number) => {
-    if (!currentWorkout) return;
-    if (to < 0 || to >= currentWorkout.logs.length) return;
-    setCurrentWorkout({
-      ...currentWorkout,
-      logs: arrayMove(currentWorkout.logs, from, to),
-      updatedAt: Date.now(),
-    });
-  };
-
-
   const deleteExercise = (exerciseIndex: number) => {
     if (!currentWorkout) return;
-    const log = currentWorkout.logs[exerciseIndex];
+    const log = currentWorkout.logs[exerciseIndex] as any;
     if (!confirm(`Delete ${log.exerciseName}?`)) return;
+
+    const id = (log?.logId as string) ?? `${log.exerciseId}-${exerciseIndex}`;
 
     const newLogs = currentWorkout.logs.filter((_, i) => i !== exerciseIndex);
     setCurrentWorkout({ ...currentWorkout, logs: newLogs });
+    setOrder((prev) => prev.filter((x) => x !== id));
+
     appendEvent('exercise_deleted', { exerciseId: log.exerciseId, name: log.exerciseName });
+  };
+
+  const moveExercisePos = (fromPos: number, toPos: number) => {
+    if (!currentWorkout) return;
+    if (toPos < 0 || toPos >= order.length) return;
+
+    setOrder((prev) => {
+      const next = arrayMove(prev, fromPos, toPos);
+      applyOrderToWorkout(next);
+      return next;
+    });
   };
 
   const addSet = (exerciseIndex: number) => {
@@ -393,8 +885,9 @@ const ActiveWorkout: React.FC = () => {
     appendEvent('set_added', { exerciseId: ex.exerciseId, setId: newSet.id });
   };
 
-  const deleteSet = (exerciseIndex: number, setIndex: number) => {
+  const deleteSetConfirmed = (exerciseIndex: number, setIndex: number) => {
     if (!currentWorkout) return;
+
     const ex = currentWorkout.logs[exerciseIndex];
     const set = ex.sets[setIndex];
 
@@ -403,24 +896,25 @@ const ActiveWorkout: React.FC = () => {
 
     setCurrentWorkout({ ...currentWorkout, logs: newLogs });
     appendEvent('set_deleted', { exerciseId: ex.exerciseId, setId: set.id });
+
+    if (restAnchor?.setId === set.id) stopRest();
   };
 
   const toggleComplete = (exerciseIndex: number, setIndex: number) => {
     if (!currentWorkout) return;
 
-    const log = currentWorkout.logs[exerciseIndex];
+    const log = currentWorkout.logs[exerciseIndex] as any as ExerciseLogWithId;
     const set = log.sets[setIndex];
     const next = !set.isCompleted;
 
-    // ghost fill if completing and fields empty
-    const ghost = getGhost(log.exerciseId, setIndex);
+    const ghostVals = getGhost(log.exerciseId, setIndex);
 
     let nextWeight = set.weight;
     let nextReps = set.reps;
 
     if (next) {
-      if ((nextWeight === 0 || Number.isNaN(nextWeight)) && ghost.weight != null) nextWeight = ghost.weight;
-      if ((nextReps === 0 || Number.isNaN(nextReps)) && ghost.reps != null) nextReps = ghost.reps;
+      if ((nextWeight === 0 || Number.isNaN(nextWeight)) && ghostVals.weight != null) nextWeight = ghostVals.weight;
+      if ((nextReps === 0 || Number.isNaN(nextReps)) && ghostVals.reps != null) nextReps = ghostVals.reps;
     }
 
     const patch: Partial<SetLog> = {
@@ -442,28 +936,23 @@ const ActiveWorkout: React.FC = () => {
       reps: nextReps,
     });
 
-    if (next) startRest(getRestForExercise(log.exerciseId));
-    else stopRest();
+    if (next) {
+      setRestAnchor({ logId: log.logId, setId: set.id });
+      startRest(getRestForExercise(log.exerciseId));
+    } else {
+      stopRest();
+    }
   };
-
-  const incompleteCount = useMemo(() => {
-    if (!currentWorkout) return 0;
-    let n = 0;
-    for (const log of currentWorkout.logs) for (const s of log.sets) if (!s.isCompleted) n++;
-    return n;
-  }, [currentWorkout]);
 
   const openFinish = () => {
     if (!currentWorkout) return;
     stopRest();
     setShowFinish(true);
 
-    // nice defaults:
-    setSaveAsTemplate(false);
-    setUpdateTemplate(false);
-    setTemplateName('');
-    setRpeOverall(8);
-    setIncompletePolicy(incompleteCount > 0 ? 'delete' : 'keep');
+    let n = 0;
+    for (const log of currentWorkout.logs) for (const s of log.sets) if (!s.isCompleted) n++;
+    setIncompleteCount(n);
+    setIncompletePolicy(n > 0 ? 'delete' : 'keep');
   };
 
   const applyIncompletePolicy = (w: WorkoutSession, policy: IncompletePolicy): WorkoutSession => {
@@ -478,98 +967,20 @@ const ActiveWorkout: React.FC = () => {
           return { ...log, sets: kept };
         }
 
-        // complete: mark incomplete sets as complete (use ghost if missing)
         const sets = log.sets.map((s, idx) => {
           if (s.isCompleted) return s;
 
           const g = getGhost(log.exerciseId, idx);
-          const weight = (s.weight === 0 && g.weight != null) ? g.weight : s.weight;
-          const reps = (s.reps === 0 && g.reps != null) ? g.reps : s.reps;
+          const weight = s.weight === 0 && g.weight != null ? g.weight : s.weight;
+          const reps = s.reps === 0 && g.reps != null ? g.reps : s.reps;
 
-          return {
-            ...s,
-            weight,
-            reps,
-            isCompleted: true,
-            completedAt: now,
-          };
-        }); 
+          return { ...s, weight, reps, isCompleted: true, completedAt: now };
+        });
         return { ...log, sets };
       })
       .filter((log) => log.sets.length > 0);
 
     return { ...w, logs };
-  };
-
-
-  const createOrUpdateTemplate = async (finished: WorkoutSession) => {
-    const token = localStorage.getItem('relay-token');
-
-    // Save new template
-    if (saveAsTemplate) {
-      const name = templateName.trim() || `Template ${new Date(finished.startTime).toLocaleDateString('en-US')}`;
-
-      const payload: WorkoutTemplate = {
-        dataVersion: 1,
-        id: uid(),
-        module: 'GYM',
-        name,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        data: {
-          exercises: finished.logs.map((l) => ({
-            exerciseId: l.exerciseId,
-            exerciseName: l.exerciseName,
-            targetSets: l.sets.length,
-            restSec: l.restSecDefault ?? 120,
-            sets: l.sets.map((s) => ({
-                reps: s.reps ?? 0,
-                weight: s.weight ?? 0,
-              })),
-          })),
-        },
-      };
-
-      await fetch('/api/templates/gym', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      });
-
-      return;
-    }
-
-    // Update used template
-    if (updateTemplate && finished.templateIdUsed) {
-      const payload = {
-        name: null,
-        dataVersion: 1,
-        data: {
-          exercises: finished.logs.map((l) => ({
-            exerciseId: l.exerciseId,
-            exerciseName: l.exerciseName,
-            targetSets: l.sets.length,
-            restSec: l.restSecDefault ?? 120,
-            sets: l.sets.map((s) => ({
-                reps: s.reps ?? 0,
-                weight: s.weight ?? 0,
-              })),
-          })),
-        },
-      };
-
-      await fetch(`/api/templates/gym/${finished.templateIdUsed}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      });
-    }
   };
 
   const finishWorkoutWithOptions = async (opts: {
@@ -597,7 +1008,6 @@ const ActiveWorkout: React.FC = () => {
     };
 
     const finished = applyIncompletePolicy(baseFinished, opts.policy);
-
     const totalVolume = computeWorkoutVolume(finished);
     const finished2: WorkoutSession = { ...finished, totalVolume };
 
@@ -624,9 +1034,9 @@ const ActiveWorkout: React.FC = () => {
     // Templates: queue offline if needed
     try {
       if (opts.saveAsTemplate && user?.id) {
-        const name = (opts.templateName?.trim() || `Template ${new Date(finished2.startTime).toLocaleDateString('en-US')}`);
+        const name = opts.templateName?.trim() || `Template ${new Date(finished2.startTime).toLocaleDateString('en-US')}`;
 
-        const body = {
+        const body: WorkoutTemplate = {
           dataVersion: 1,
           id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           module: 'GYM',
@@ -639,32 +1049,20 @@ const ActiveWorkout: React.FC = () => {
               exerciseName: l.exerciseName,
               targetSets: l.sets.length,
               restSec: l.restSecDefault ?? 120,
-              sets: l.sets.map((s) => ({
-              reps: s.reps ?? 0,
-              weight: s.weight ?? 0,
-              })),
+              sets: l.sets.map((s) => ({ reps: s.reps ?? 0, weight: s.weight ?? 0 })),
             })),
           },
         };
 
-        const payload = {
-          method: 'POST',
-          endpoint: '/api/templates/gym',
-          body,
-        };
+        const payload = { method: 'POST' as const, endpoint: '/api/templates/gym', body };
 
         if (pushed && token) {
-          // best-effort immediately
           await fetch(payload.endpoint, {
             method: payload.method,
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify(payload.body),
-          }).catch(() => {
-            // queue if fails
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-          });
+          }).catch(() => {});
         } else {
-          // queue offline
           const { enqueuePendingTemplate } = await import('../../data/sync/pendingTemplates');
           enqueuePendingTemplate(user.id, body.id, payload);
         }
@@ -680,19 +1078,12 @@ const ActiveWorkout: React.FC = () => {
               exerciseName: l.exerciseName,
               targetSets: l.sets.length,
               restSec: l.restSecDefault ?? 120,
-              sets: l.sets.map((s) => ({
-                reps: s.reps ?? 0,
-                weight: s.weight ?? 0,
-              })),
+              sets: l.sets.map((s) => ({ reps: s.reps ?? 0, weight: s.weight ?? 0 })),
             })),
           },
         };
 
-        const payload = {
-          method: 'PUT',
-          endpoint: `/api/templates/gym/${finished2.templateIdUsed}`,
-          body,
-        };
+        const payload = { method: 'PUT' as const, endpoint: `/api/templates/gym/${finished2.templateIdUsed}`, body };
 
         if (pushed && token) {
           await fetch(payload.endpoint, {
@@ -712,7 +1103,6 @@ const ActiveWorkout: React.FC = () => {
       console.warn('Template queue/save failed', e);
     }
 
-    // Draft is done; don’t resurrect
     clearWorkoutDraft(finished2.id);
 
     setWorkoutHistory([finished2, ...workoutHistory]);
@@ -720,7 +1110,6 @@ const ActiveWorkout: React.FC = () => {
     setShowFinish(false);
     setFinishing(false);
 
-    // optional: after successful push, refresh cache from server
     if (pushed && user?.id && token) {
       syncNow({ userId: user.id, token, module: 'GYM' }).catch(() => {});
     }
@@ -744,8 +1133,6 @@ const ActiveWorkout: React.FC = () => {
       updateUsedTemplate: opts.updateUsedTemplate,
     });
   };
-
-
 
   const cancelWorkout = () => {
     if (!currentWorkout) return;
@@ -777,10 +1164,16 @@ const ActiveWorkout: React.FC = () => {
 
   if (!currentWorkout) return null;
 
+  // Bottom nav spacing
+  const bottomNavPx = 84;
+
+  // Floating button bottom: safe-area + nav + padding
+  const floatingBottom = 'calc(env(safe-area-inset-bottom, 0px) + 96px)';
+
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] animate-in slide-in-from-right duration-300">
-      {/* SUB-HEADER */}
-      <div className="fixed top-16 left-0 right-0 z-[90] bg-[var(--primary)] text-white px-6 py-3 flex items-center justify-between shadow-lg">
+      {/* SUB-HEADER (timer back) */}
+      <div className="sticky top-16 left-0 right-0 z-[90] bg-[var(--primary)] text-white px-6 py-3 flex items-center justify-between shadow-lg">
         <button
           type="button"
           onClick={cancelWorkout}
@@ -813,183 +1206,42 @@ const ActiveWorkout: React.FC = () => {
         </button>
       </div>
 
-      {/* CONTENT */}
-      <div className="p-6 pt-20 space-y-6 pb-40">
-        <div className="space-y-6">
-          {currentWorkout.logs.map((log, exIndex) => {
-            const restForThis = getRestForExercise(log.exerciseId);
+      {/* CONTENT (relative so reorder overlay is within it; AppShell/bottom nav remain visible) */}
+      <div className="relative p-6 space-y-6 pb-40">
+        <AnimatePresence initial={false}>
+          {order.map((id) => {
+            const idx = (currentWorkout.logs as any[]).findIndex((l) => l?.logId === id);
+            const log = (idx >= 0 ? currentWorkout.logs[idx] : null) as any as ExerciseLogWithId | null;
+            if (!log) return null;
 
             return (
-              <div
-                key={`${log.exerciseId}-${exIndex}`}
-                className="bg-[var(--glass)] backdrop-blur-xl border border-[var(--border)] rounded-3xl p-5 shadow-[0_12px_32px_rgba(0,0,0,0.10)]"
-              >
-                {/* Header */}
-                <div className="flex justify-between items-start mb-4 gap-4">
-                  <div className="min-w-0">
-                    <h3 className="font-black italic text-lg truncate">{log.exerciseName}</h3>
-
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setRestConfigForExerciseId(log.exerciseId)}
-                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
-                      >
-                        <Timer size={14} />
-                        Rest {formatMMSS(restForThis)}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => deleteExercise(exIndex)}
-                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-red-500 hover:border-red-500 transition-colors"
-                        aria-label="Delete exercise"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-
-
-                      <button
-                        type="button"
-                        onClick={() => moveExercise(exIndex, exIndex - 1)}
-                        disabled={exIndex === 0}
-                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
-                      >
-                        <ChevronUp size={14} />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => moveExercise(exIndex, exIndex + 1)}
-                        disabled={exIndex === currentWorkout.logs.length - 1}
-                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <button type="button" className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors mt-1">
-                    <ChevronDown size={20} />
-                  </button>
-                </div>
-
-                {/* Table */}
-                <div className="space-y-2">
-                  <div className="grid grid-cols-6 gap-2 px-2 text-[10px] font-black uppercase text-[var(--text-muted)]">
-                    <span>Set</span>
-                    <span className="col-span-2">Prev</span>
-                    <span>Weight</span>
-                    <span>Reps</span>
-                    <span className="text-center">Done</span>
-                  </div>
-
-                  {log.sets.map((set, setIndex) => {
-                    const completed = !!set.isCompleted;
-                    const ghostLabel = formatGhost(log.exerciseId, setIndex);
-                    const g = getGhost(log.exerciseId, setIndex);
-
-                    const key = set.id;
-
-                    const onTouchStart: React.TouchEventHandler<HTMLDivElement> = (e) => {
-                      const t = e.touches[0];
-                      swipeRef.current[key] = { startX: t.clientX, startY: t.clientY, swiping: false, triggered: false };
-                    };
-
-                    const onTouchMove: React.TouchEventHandler<HTMLDivElement> = (e) => {
-                      const st = swipeRef.current[key];
-                      if (!st) return;
-                      const t = e.touches[0];
-                      const dx = t.clientX - st.startX;
-                      const dy = t.clientY - st.startY;
-
-                      if (!st.swiping) {
-                        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) st.swiping = true;
-                      }
-                      if (st.swiping && !st.triggered && dx < -SWIPE_DELETE_PX) {
-                        st.triggered = true;
-                        deleteSet(exIndex, setIndex);
-                      }
-                    };
-
-                    const onTouchEnd: React.TouchEventHandler<HTMLDivElement> = () => {
-                      delete swipeRef.current[key];
-                    };
-
-                    return (
-                      <div
-                        key={set.id}
-                        onTouchStart={onTouchStart}
-                        onTouchMove={onTouchMove}
-                        onTouchEnd={onTouchEnd}
-                        className={[
-                          "grid grid-cols-6 gap-2 items-center p-2 rounded-xl transition-colors",
-                          completed ? "bg-[var(--primary-soft)]" : "bg-transparent",
-                        ].join(" ")}
-                      >
-                        <span className="font-black text-sm">{setIndex + 1}</span>
-
-                        <span className="col-span-2 text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] truncate">
-                          {ghostLabel || '—'}
-                        </span>
-
-                        {/* Weight */}
-                        <input
-                          inputMode="decimal"
-                          value={set.weight === 0 ? '' : String(set.weight)}
-                          placeholder={g.weight != null ? String(g.weight) : '0'}
-                          onChange={(e) => {
-                            const raw = e.target.value.replace(',', '.');
-                            const cleaned = raw.replace(/[^0-9.]/g, '');
-                            const num = cleaned === '' ? 0 : Number(cleaned);
-                            updateSet(exIndex, setIndex, { weight: Number.isFinite(num) ? num : 0 });
-                          }}
-                          className="rounded-lg p-2 text-xs font-bold text-center w-full bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]"
-                        />
-
-                        {/* Reps */}
-                        <input
-                          inputMode="numeric"
-                          value={set.reps === 0 ? '' : String(set.reps)}
-                          placeholder={g.reps != null ? String(g.reps) : '0'}
-                          onChange={(e) => {
-                            const cleaned = e.target.value.replace(/[^0-9]/g, '');
-                            const num = cleaned === '' ? 0 : parseInt(cleaned, 10);
-                            updateSet(exIndex, setIndex, { reps: Number.isFinite(num) ? num : 0 });
-                          }}
-                          className="rounded-lg p-2 text-xs font-bold text-center w-full bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]"
-                        />
-
-                        {/* INLINE ✅ */}
-                        <button
-                          type="button"
-                          onClick={() => toggleComplete(exIndex, setIndex)}
-                          className={[
-                            "flex justify-center items-center h-10 w-10 mx-auto rounded-xl transition-all border",
-                            completed
-                              ? "bg-[var(--primary)] text-white border-white/10"
-                              : "bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--primary)] hover:border-[var(--primary)]",
-                          ].join(" ")}
-                          aria-label="Toggle set completed"
-                        >
-                          <Check size={18} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => addSet(exIndex)}
-                  className="w-full mt-4 border-2 border-dashed border-[var(--border)] p-3 rounded-xl text-[var(--text-muted)] font-black text-xs uppercase tracking-widest hover:border-[var(--primary)] hover:text-[var(--primary)] transition-all"
-                >
-                  + ADD SET
-                </button>
-              </div>
+              <ExerciseCard
+                key={id}
+                log={log}
+                exIndex={idx}
+                deleteExercise={deleteExercise}
+                addSet={addSet}
+                deleteSetConfirmed={deleteSetConfirmed}
+                updateSet={updateSet}
+                toggleComplete={toggleComplete}
+                getRestForExercise={getRestForExercise}
+                setRestConfigForExerciseId={setRestConfigForExerciseId}
+                formatGhost={formatGhost}
+                getGhost={getGhost}
+                swipeRef={swipeRef}
+                restRunning={restRunning}
+                restRemaining={restRemaining}
+                restTotal={restTotal}
+                restAnchor={restAnchor}
+                stopRest={stopRest}
+                addRest={addRest}
+              />
             );
           })}
+        </AnimatePresence>
 
+        {/* Bottom-of-list actions */}
+        <div className="pt-2 space-y-3" style={{ paddingBottom: `${bottomNavPx + 16}px` }}>
           <button
             type="button"
             onClick={() => setShowExercisePicker(true)}
@@ -998,45 +1250,126 @@ const ActiveWorkout: React.FC = () => {
             <Plus size={20} strokeWidth={3} />
             ADD EXERCISE
           </button>
-        </div>
-      </div>
 
-      {/* Rest countdown bar */}
-      {restRunning && (
-        <div className="fixed bottom-[84px] left-4 right-4 z-[95] max-w-xl mx-auto">
           <button
             type="button"
-            onClick={stopRest}
-            className="w-full rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] shadow-[0_12px_32px_rgba(0,0,0,0.16)] overflow-hidden"
+            onClick={openFinish}
+            className="w-full bg-[var(--primary)] text-white p-6 rounded-[24px] font-black flex items-center justify-center gap-2 border border-white/10 hover:opacity-95 transition-opacity"
           >
-            <div className="px-4 py-3 flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Resting</span>
-              <span className="text-lg font-black italic text-[var(--primary)]">{formatMMSS(restRemaining)}</span>
-            </div>
-            <div
-              className="h-2 bg-[var(--primary)]"
-              style={{ width: `${restTotal > 0 ? (restRemaining / restTotal) * 100 : 0}%` }}
-            />
+            FINISH WORKOUT
           </button>
         </div>
-      )}
 
-      {/* Exercise Picker Modal */}
+        {/* REORDER OVERLAY (content-only; does NOT cover AppShell / bottom nav) */}
+        {showReorderTab && (
+          <div
+            className="absolute inset-x-0 top-0 z-[60]"
+            style={{ bottom: `${bottomNavPx}px` }} // keep bottom nav visible
+          >
+            {/* Backdrop */}
+            <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" />
+
+            {/* Panel */}
+            <div className="absolute inset-0 bg-[var(--bg)] text-[var(--text)]">
+              {/* Title */}
+              <div className="sticky top-0 z-[2] px-6 py-4 bg-[var(--bg)]/85 backdrop-blur-xl border-b border-[var(--border)]">
+                <h3 className="text-center text-[10px] font-black uppercase tracking-[0.25em] text-[var(--text-muted)]">
+                  Reorder Exercises
+                </h3>
+              </div>
+
+              {/* Scroll area */}
+              <div
+                ref={reorderScrollRef}
+                className="px-6 pt-4 pb-40 overflow-y-auto"
+                style={{ WebkitOverflowScrolling: 'touch' as any }}
+              >
+                <Reorder.Group
+                  axis="y"
+                  values={order}
+                  onReorder={applyOrderToWorkout}
+                  className="space-y-2"
+                  style={{ touchAction: 'none' }}
+                >
+                  <AnimatePresence initial={false}>
+                    {order.map((id, pos) => {
+                      const logIndex = (currentWorkout.logs as any[]).findIndex((l) => l?.logId === id);
+                      const log = (logIndex >= 0
+                        ? currentWorkout.logs[logIndex]
+                        : null) as any as ExerciseLogWithId | null;
+                      if (!log) return null;
+
+                      return (
+                        <OverviewRow
+                          key={id}
+                          id={id}
+                          log={log}
+                          pos={pos}
+                          count={order.length}
+                          logIndex={logIndex}
+                          onDeleteAtLogIndex={deleteExercise}
+                          onMovePos={moveExercisePos}
+                        />
+                      );
+                    })}
+                  </AnimatePresence>
+                </Reorder.Group>
+
+                {/* Add Exercise (formatted nicely) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExercisePicker(true);
+                    setShowReorderTab(false);
+                  }}
+                  className="w-full mt-4 bg-[var(--primary-soft)] text-[var(--primary)] p-6 rounded-[24px] font-black flex items-center justify-center gap-2 border border-[var(--border)] hover:bg-[var(--primary-soft)]/80 transition-colors"
+                >
+                  <Plus size={18} strokeWidth={3} />
+                  ADD EXERCISE
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Floating Reorder Toggle (always visible; stable on scroll) */}
+      <button
+        type="button"
+        onClick={() => setShowReorderTab((v) => !v)}
+        className={[
+          'fixed left-4 z-[97] rounded-2xl border shadow-[0_12px_30px_rgba(0,0,0,0.22)] px-4 h-12 flex items-center gap-2 font-black uppercase tracking-widest text-[10px]',
+          'will-change-transform translate-z-0 transition-colors',
+          showReorderTab ? 'bg-red-500 text-white border-red-600' : 'bg-[var(--bg-card)] text-[var(--text)] border-[var(--border)]',
+        ].join(' ')}
+        style={{ bottom: floatingBottom }}
+        aria-pressed={showReorderTab}
+        aria-label={showReorderTab ? 'Exit reorder mode' : 'Enter reorder mode'}
+      >
+        <ListOrdered size={16} />
+        {showReorderTab ? 'Done' : 'Reorder'}
+      </button>
+
+      {/* Exercise Picker Modal (WORKS again) */}
       <ExerciseLibraryModal
         open={showExercisePicker}
         title="ADD EXERCISES"
         exercises={EXERCISES}
         mode="single"
-        onPick={(id) => addExercise(id)}   // <- deine bestehende Funktion
+        onPick={(id) => addExercise(id)}
         onClose={() => setShowExercisePicker(false)}
       />
+
       {/* Rest config modal */}
       {restConfigForExerciseId && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex flex-col justify-end p-4">
           <div className="bg-[var(--bg)] text-[var(--text)] rounded-[40px] p-6 w-full max-w-md mx-auto border border-[var(--border)] animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-between items-center mb-5">
               <h3 className="text-xl font-black italic">REST PER EXERCISE</h3>
-              <button onClick={() => setRestConfigForExerciseId(null)} className="p-2 bg-[var(--bg-card)] border border-[var(--border)] rounded-full">
+              <button
+                onClick={() => setRestConfigForExerciseId(null)}
+                className="p-2 bg-[var(--bg-card)] border border-[var(--border)] rounded-full"
+              >
                 <X size={18} />
               </button>
             </div>
@@ -1050,11 +1383,11 @@ const ActiveWorkout: React.FC = () => {
                     setRestConfigForExerciseId(null);
                   }}
                   className={[
-                    "rounded-2xl p-4 border font-black uppercase tracking-widest text-[10px] transition-colors",
+                    'rounded-2xl p-4 border font-black uppercase tracking-widest text-[10px] transition-colors',
                     (restByExerciseId[restConfigForExerciseId] ?? DEFAULT_REST) === s
-                      ? "bg-[var(--primary-soft)] border-[var(--primary)] text-[var(--primary)]"
-                      : "bg-[var(--bg-card)] border-[var(--border)] text-[var(--text)] hover:bg-[var(--glass-strong)]",
-                  ].join(" ")}
+                      ? 'bg-[var(--primary-soft)] border-[var(--primary)] text-[var(--primary)]'
+                      : 'bg-[var(--bg-card)] border-[var(--border)] text-[var(--text)] hover:bg-[var(--glass-strong)]',
+                  ].join(' ')}
                 >
                   {formatMMSS(s)}
                 </button>
@@ -1071,32 +1404,25 @@ const ActiveWorkout: React.FC = () => {
         </div>
       )}
 
-      {/* Finish Modal */}
+      {/* Finish Modal (with spacer so bottom nav doesn’t cover it) */}
       {showFinish && currentWorkout && (
-        <FinishWorkoutModal
-          open={showFinish}
-          onClose={() => setShowFinish(false)}
-          workout={currentWorkout}
-          templateIdUsed={currentWorkout.templateIdUsed ?? null}
-          onConfirmFinish={onConfirmFinishFromModal}
-        />
+        <>
+          <div
+            className="fixed left-0 right-0 bottom-0 z-[119] pointer-events-none"
+            style={{ height: `${bottomNavPx + 12}px` }}
+          />
+          <FinishWorkoutModal
+            open={showFinish}
+            onClose={() => setShowFinish(false)}
+            workout={currentWorkout}
+            templateIdUsed={currentWorkout.templateIdUsed ?? null} 
+            onConfirmFinish={onConfirmFinishFromModal}
+          />
+        </>
       )}
-      
     </div>
   );
 };
-
-const RadioRow: React.FC<{ active: boolean; onClick: () => void; title: string }> = ({ active, onClick, title }) => (
-  <button
-    onClick={onClick}
-    className={[
-      "w-full text-left rounded-2xl border px-4 py-3 transition-colors",
-      active ? "bg-[var(--primary-soft)] border-[var(--primary)] text-[var(--primary)]" : "bg-[var(--bg)] border-[var(--border)] text-[var(--text)]",
-    ].join(' ')}
-  >
-    <div className="text-[11px] font-[900] uppercase tracking-widest">{title}</div>
-  </button>
-);
 
 function computeWorkoutVolume(w: WorkoutSession): number {
   let total = 0;

@@ -21,6 +21,11 @@ import GymHistoryDetail from './features/gym-tracker/GymHistoryDetails';
 
 import TemplateBuilderPage from './features/gym-tracker/TemplateBuilderPage';
 
+import GymTemplates from './features/gym-tracker/GymTemplates';
+import AnalyticsPanel from './features/gym-tracker/AnalyticsPanel';
+import GymImportExport from './features/gym-tracker/GymImportExport';
+
+
 import { registerSW } from 'virtual:pwa-register';
 
 const updateSW = registerSW({
@@ -67,10 +72,13 @@ const AppContent: React.FC = () => {
             <Route path="/activities" element={<ActivitiesOverview />} />
             <Route path="/activities/gym" element={<GymDashboard />} />
             <Route path="/activities/gym/active" element={<ActiveWorkout />} />
+            <Route path="/activities/gym/analytics" element={<AnalyticsPanel />} />
             <Route path="/activities/gym/history" element={<GymHistory />} />
             <Route path="/activities/gym/history/:id" element={<GymHistoryDetail />} />
+            <Route path="/activities/gym/templates" element={<GymTemplates />} />
             <Route path="/activities/gym/templates/new" element={<TemplateBuilderPage />} />
             <Route path="/activities/gym/templates/:id/edit" element={<TemplateBuilderPage />} />
+            <Route path="/activities/gym/importexport" element={<GymImportExport />} />
             <Route path="*" element={<Navigate to="/home" />} />
           </Route>
         </>

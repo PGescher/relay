@@ -134,7 +134,7 @@ const GymDashboard: React.FC = () => {
       )}
 
       {/* Tabs */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-4 gap-1">
         {tabs.map(({ id, label, icon: Icon }) => {
           const active = tab === id;
           return (
@@ -142,15 +142,15 @@ const GymDashboard: React.FC = () => {
               key={id}
               onClick={() => setTab(id)}
               className={[
-                "rounded-2xl px-3 py-3 border text-center transition-colors",
+                "rounded-2xl px-1 py-3 border text-center transition-colors",
                 active
                   ? "bg-[var(--primary-soft)] border-[var(--primary)] text-[var(--primary)]"
                   : "bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]",
               ].join(' ')}
             >
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex items-center justify-center gap-0">
                 <Icon size={16} />
-                <span className="text-[10px] font-[900] uppercase tracking-widest">{label}</span>
+                <span className="text-[8px] font-[900] uppercase tracking-widest">{label}</span>
               </div>
             </button>
           );
