@@ -26,7 +26,7 @@ import AnalyticsPanel from './features/gym-tracker/AnalyticsPanel';
 import GymImportExport from './features/gym-tracker/GymImportExport';
 
 
-import { registerSW } from 'virtual:pwa-register';
+//import { registerSW } from 'virtual:pwa-register';
 
 const updateSW = registerSW({
   immediate: true,
