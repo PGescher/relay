@@ -56,15 +56,21 @@ const GymDashboard: React.FC = () => {
   }, []);
 
   const startWorkout = () => {
+    const now = Date.now();
+
     const newWorkout: WorkoutSession = {
       dataVersion: 1,
       id: uid(),
-      startTime: Date.now(),
-      logs: [],
-      status: 'active',
       module: 'GYM',
+      status: 'active',
+
+      startTime: now,
+      updatedAt: now,
+
+      logs: [],
       templateIdUsed: null,
     };
+
     setCurrentWorkout(newWorkout);
     navigate('/activities/gym/active');
   };
@@ -116,11 +122,11 @@ const GymDashboard: React.FC = () => {
       ) : (
         <button
           onClick={startWorkout}
-          className="w-full bg-[var(--text)] text-[var(--bg)] p-8 rounded-[32px]
-                     flex flex-col items-center justify-center gap-4
+          className="w-full bg-[var(--text)] text-[var(--bg)] p-2 rounded-[32px]
+                     flex flex-col items-center justify-center gap-1
                      hover:scale-[1.02] active:scale-95 transition-all shadow-xl shadow-black/10"
         >
-          <div className="bg-white/10 p-4 rounded-full">
+          <div className="bg-white/10 p-2 rounded-full">
             <Play fill="currentColor" size={30} />
           </div>
           <span className="font-[900] italic uppercase tracking-tight">START NEW WORKOUT</span>

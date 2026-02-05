@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 
 import { requireAuth, type AuthedRequest } from './authMiddleware.js';
+import { WorkoutModule } from '@prisma/client';
+
 
 const router = express.Router();
 
@@ -66,13 +68,13 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
   }
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      // 1) Base workout upsert (keep JSON snapshot for backward compatibility)
+    const saved = await prisma.$transaction(async (tx) => {
+      // 1) Base workout (keep JSON snapshot so existing frontend keeps working)
       const savedWorkout = await tx.workout.upsert({
         where: { id: workout.id },
         update: {
           userId: req.userId!,
-          module: workout.module,          // 'GYM' matches enum name
+          module: workout.module, // must match enum strings now ('GYM')
           status: 'COMPLETED',
           startTime: new Date(workout.startTime),
           endTime: new Date(workout.endTime),
@@ -98,35 +100,29 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
         },
       });
 
-      // 2) Ensure WorkoutGym (1:1)
+      // 2) WorkoutGym 1:1
       const gym = await tx.workoutGym.upsert({
         where: { workoutId: savedWorkout.id },
         update: { notes: workout.notes ?? null },
         create: { workoutId: savedWorkout.id, notes: workout.notes ?? null },
       });
 
-      // 3) Create/ensure exercises exist (stubs if missing)
-      // NOTE: if you want custom exercises per user, you can set userId/isCustom based on prefix ex_custom_
+      // 3) ensure exercises exist (stub)
       for (const log of workout.logs) {
         await tx.exercise.upsert({
           where: { id: log.exerciseId },
-          update: {
-            // keep name in sync (optional)
-            name: log.exerciseName,
-          },
+          update: { name: log.exerciseName },
           create: {
             id: log.exerciseId,
             name: log.exerciseName,
-            // optional: if id looks custom, attach to user
             userId: log.exerciseId.startsWith('ex_custom_') ? req.userId! : null,
             isCustom: log.exerciseId.startsWith('ex_custom_'),
-            // the rest uses defaults from schema
+            // other fields rely on schema defaults
           },
         });
       }
 
-      // 4) Replace gym exercises+sets for this workout (idempotent save)
-      // easiest: delete previous and recreate (since workout is "completed")
+      // 4) replace gym exercises + sets (idempotent for completed workouts)
       await tx.workoutGymSet.deleteMany({
         where: { workoutGymExercise: { workoutGymId: gym.id } },
       });
@@ -134,7 +130,6 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
         where: { workoutGymId: gym.id },
       });
 
-      // 5) Insert exercises + sets
       for (let i = 0; i < workout.logs.length; i++) {
         const log = workout.logs[i];
 
@@ -163,7 +158,7 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
         }
       }
 
-      // 6) Events (append-only, skip duplicates)
+      // 5) events (append-only)
       await tx.workoutEvent.createMany({
         data: events.map((e) => ({
           id: e.id,
@@ -178,7 +173,7 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
       return savedWorkout;
     });
 
-    return res.json({ ok: true, workoutId: result.id });
+    return res.json({ ok: true, workoutId: saved.id, serverUpdatedAt: saved.updatedAt.getTime() });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to store workout' });
@@ -186,32 +181,35 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
 });
 
 
+
 // list workouts (returns stored workout payloads from data)
 router.get('/', requireAuth, async (req: AuthedRequest, res) => {
-  const module = String(req.query.module || '');
-  const status = String(req.query.status || '');
+  const moduleQ = req.query.module ? String(req.query.module) : undefined;
+  const statusQ = req.query.status ? String(req.query.status) : undefined;
+
+  const module = moduleQ && Object.values(WorkoutModule).includes(moduleQ as WorkoutModule)
+    ? (moduleQ as WorkoutModule)
+    : undefined;
 
   try {
     const rows = await prisma.workout.findMany({
       where: {
         userId: req.userId!,
         ...(module ? { module } : {}),
-        ...(status ? { status } : {}),
+        ...(statusQ ? { status: statusQ as any } : {}),
       },
       orderBy: { startTime: 'desc' },
       take: 200,
     });
 
-    const workouts = rows
-      .map((r) => r.data)
-      .filter(Boolean);
-
+    const workouts = rows.map((r) => r.data).filter(Boolean);
     return res.json({ workouts });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'Failed to list workouts' });
   }
 });
+
 
 router.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
   try {

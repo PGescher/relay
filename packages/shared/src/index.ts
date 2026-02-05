@@ -1,14 +1,17 @@
 import { z } from 'zod';
 
-// Auth schemas
+// =======================
+// Auth schemas (NEW)
+// =======================
 export const SignupSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_.]+$/, 'Only letters, numbers, _ and .'),
+  displayName: z.string().min(2).max(64),
+  email: z.string().email().optional(),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
 });
 
 export const LoginSchema = z.object({
-  email: z.string().email(),
+  identifier: z.string().min(3), // username OR email
   password: z.string(),
 });
 
@@ -17,15 +20,24 @@ export type LoginInput = z.infer<typeof LoginSchema>;
 
 export type Theme = 'light' | 'dark';
 
+export type UserRole = 'ADMIN' | 'DEVELOPER' | 'TESTER' | 'USER';
+
 export type User = {
   id: string;
-  email: string;
-  name: string;
+  username: string;
+  displayName: string;
+  email?: string | null;
+
+  role: UserRole;
+  features: string[];
+
   theme: Theme;
 };
 
-// Activity
-export const ActivityModuleSchema = z.enum(['GYM', 'RUNNING', 'CYCLING']);
+// =======================
+// Activity modules (align with Prisma enum)
+// =======================
+export const ActivityModuleSchema = z.enum(['GYM', 'RUN', 'BIKE', 'SWIM', 'TENNIS', 'PADEL']);
 export type ActivityModule = z.infer<typeof ActivityModuleSchema>;
 
 // Exercise library type
@@ -185,11 +197,23 @@ export type WorkoutTemplate = {
     exercises: Array<{
       exerciseId: string;
       exerciseName: string;
+
+      // how many sets this exercise should have
       targetSets: number;
+
+      // default rest
       restSec: number;
+
+      // ✅ NEW (optional): per-set defaults for templates
+      // If present, ActiveWorkout can prefill weight/reps from here.
+      sets?: Array<{
+        reps?: number;
+        weight?: number;
+      }>;
     }>;
   };
 };
+
 
 // Social feed placeholder
 export interface Post {

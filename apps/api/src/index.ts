@@ -6,6 +6,8 @@ import { prisma } from './prisma.js';
 import authRoutes from './auth.js';
 import workoutRoutes from './workouts.js';
 import templateRoutes from './templates.js';
+import syncRoutes from './sync.js';
+
 
 const app = express();
 app.use(cors());
@@ -14,6 +16,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/workouts', workoutRoutes);
 app.use('/api/templates', templateRoutes);
+app.use('/api/sync', syncRoutes);
 
 app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
 

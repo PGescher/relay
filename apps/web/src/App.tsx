@@ -1,5 +1,5 @@
 import React from 'react';
-import { HashRouter, MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, MemoryRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider } from './context/AppContext'; 
@@ -11,12 +11,29 @@ import AppShell from './components/layout/AppShell';
 import LandingPage from './features/auth/LandingPage';
 import SignupPage from './features/auth/SignupPage';
 import LoginPage from './features/auth/LoginPage';
+import LoginEmailPage from './features/auth/LoginEmailPage';
 import ActivitiesOverview from './features/activities/ActivitesOverview';
 import GymDashboard from './features/gym-tracker/GymDashboard';
 import GymHistory from './features/gym-tracker/GymHistory';
 import HomeHub from './features/home/HomeHub';
 import ActiveWorkout from './features/gym-tracker/ActiveWorkout';
 import GymHistoryDetail from './features/gym-tracker/GymHistoryDetails';
+
+import TemplateBuilderPage from './features/gym-tracker/TemplateBuilderPage';
+
+import { registerSW } from 'virtual:pwa-register';
+
+const updateSW = registerSW({
+  immediate: true,
+  onNeedRefresh() {
+    // Variante 1: hart reloaden (simpel, effektiv)
+    updateSW(true);
+  },
+  onOfflineReady() {
+    // optional: kannst du loggen oder toasten
+    console.log('App ready to work offline');
+  },
+});
 
 // This logic detects if we are in a limited environment (like some web previews)
 const Router = typeof window !== 'undefined' && window.location.protocol === 'blob:' 
@@ -39,27 +56,23 @@ const AppContent: React.FC = () => {
         <>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/login-email" element={<LoginEmailPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="*" element={<Navigate to="/" />} />
         </>
       ) : (
-        <Route path="/*" element={
-          <AppShell onLogout={logout}>
-            <Routes>
-              <Route path="/home" element={<HomeHub user={user}/>} />
-              <Route path="/activities" element={<ActivitiesOverview />} />
-              <Route path="/activities/gym" element={<GymDashboard />} />
-              <Route path="/activities/gym/active" element={<ActiveWorkout />} />
-              <Route path="/activities/gym/history" element={<GymHistory />} />
-              <Route path="/activities/gym/active" element={<ActiveWorkout />} />
-              <Route path="/activities/gym/history/:id" element={<GymHistoryDetail />} />
-              <Route path="/feed" element={<PlaceholderView title="Social Feed" />} />
-              <Route path="/settings" element={<PlaceholderView title="Settings" />} />
-              <Route path="*" element={<Navigate to="/home" />} />
-              {/* ... rest of your routes */}
-            </Routes>
-          </AppShell>
-        } />
+        <>
+          <Route element={<AppShell onLogout={logout} />}>
+            <Route path="/home" element={<HomeHub user={user} />} />
+            <Route path="/activities" element={<ActivitiesOverview />} />
+            <Route path="/activities/gym" element={<GymDashboard />} />
+            <Route path="/activities/gym/active" element={<ActiveWorkout />} />
+            <Route path="/activities/gym/history" element={<GymHistory />} />
+            <Route path="/activities/gym/history/:id" element={<GymHistoryDetail />} />
+            <Route path="/activities/gym/templates/new" element={<TemplateBuilderPage />} />
+            <Route path="*" element={<Navigate to="/home" />} />
+          </Route>
+        </>
       )}
     </Routes>
   );

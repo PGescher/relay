@@ -32,13 +32,15 @@ const GymHistoryDetail: React.FC = () => {
   }
 
   const repeatWorkout = () => {
+    const now = Date.now();
     const next: WorkoutSession = {
       dataVersion: 1,
       id: uid(),
-      startTime: Date.now(),
+      startTime: now,
       status: 'active',
       module: 'GYM',
       templateIdUsed: null,
+      updatedAt: now,
       // copy structure, but sets start empty (or “targets” as ghost)
       logs: workout.logs.map((l) => ({
         exerciseId: l.exerciseId,

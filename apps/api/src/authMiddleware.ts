@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = 'dev-secret-123';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-123';
 
 export type AuthedRequest = Request & { userId?: string };
 

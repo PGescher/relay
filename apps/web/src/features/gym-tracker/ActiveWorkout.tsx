@@ -5,6 +5,16 @@ import { EXERCISES } from './constants';
 import { Plus, Check, ChevronDown, X, Timer, Trash2, Save } from 'lucide-react';
 import type { ExerciseLog, SetLog, WorkoutEvent, WorkoutSession, WorkoutTemplate } from '@relay/shared';
 import { saveWorkoutDraft, clearWorkoutDraft, loadLastWorkoutDraft } from './workoutDraft';
+import { FinishWorkoutModal } from './FinishWorkoutModal';
+import { ExerciseLibraryModal } from './ExerciseLibraryModal';
+
+import { useAuth } from '../../context/AuthContext';
+import { apiPushGymComplete } from '../../data/apiClient';
+import { enqueuePending } from '../../data/sync/pendingQueue';
+import { upsertWorkouts } from '../../data/workoutCache';
+import { syncNow } from '../../data/sync/syncManager';
+
+
 
 const REST_STORAGE_KEY = 'relay:gym:restByExerciseId:v1';
 
@@ -37,6 +47,8 @@ type IncompletePolicy = 'delete' | 'complete' | 'keep';
 const ActiveWorkout: React.FC = () => {
   const { currentWorkout, setCurrentWorkout, setWorkoutHistory, workoutHistory } = useApp();
   const navigate = useNavigate();
+
+  const { user, token } = useAuth();
 
   const [timer, setTimer] = useState(0);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
@@ -371,14 +383,14 @@ const ActiveWorkout: React.FC = () => {
     setIncompletePolicy(incompleteCount > 0 ? 'delete' : 'keep');
   };
 
-  const applyIncompletePolicy = (w: WorkoutSession): WorkoutSession => {
-    if (incompletePolicy === 'keep') return w;
+  const applyIncompletePolicy = (w: WorkoutSession, policy: IncompletePolicy): WorkoutSession => {
+    if (policy === 'keep') return w;
 
     const now = Date.now();
 
     const logs = w.logs
       .map((log) => {
-        if (incompletePolicy === 'delete') {
+        if (policy === 'delete') {
           const kept = log.sets.filter((s) => s.isCompleted);
           return { ...log, sets: kept };
         }
@@ -398,14 +410,14 @@ const ActiveWorkout: React.FC = () => {
             isCompleted: true,
             completedAt: now,
           };
-        });
+        }); 
         return { ...log, sets };
       })
-      // if deleting caused empty exercise, drop it
       .filter((log) => log.sets.length > 0);
 
     return { ...w, logs };
   };
+
 
   const createOrUpdateTemplate = async (finished: WorkoutSession) => {
     const token = localStorage.getItem('relay-token');
@@ -427,6 +439,10 @@ const ActiveWorkout: React.FC = () => {
             exerciseName: l.exerciseName,
             targetSets: l.sets.length,
             restSec: l.restSecDefault ?? 120,
+            sets: l.sets.map((s) => ({
+                reps: s.reps ?? 0,
+                weight: s.weight ?? 0,
+              })),
           })),
         },
       };
@@ -454,6 +470,10 @@ const ActiveWorkout: React.FC = () => {
             exerciseName: l.exerciseName,
             targetSets: l.sets.length,
             restSec: l.restSecDefault ?? 120,
+            sets: l.sets.map((s) => ({
+                reps: s.reps ?? 0,
+                weight: s.weight ?? 0,
+              })),
           })),
         },
       };
@@ -469,66 +489,180 @@ const ActiveWorkout: React.FC = () => {
     }
   };
 
-  const finishWorkout = async () => {
+  const finishWorkoutWithOptions = async (opts: {
+    policy: IncompletePolicy;
+    rpeOverall?: number;
+    saveAsTemplate: boolean;
+    templateName?: string;
+    updateUsedTemplate: boolean;
+  }) => {
     if (!currentWorkout) return;
     if (finishing) return;
 
     setFinishing(true);
     appendEvent('workout_finish_opened', { incompleteCount });
 
-    // Build finished
+    const now = Date.now();
+
     const baseFinished: WorkoutSession = {
       ...currentWorkout,
       dataVersion: 1,
-      endTime: Date.now(),
+      endTime: now,
       status: 'completed',
-      durationSec: Math.round((Date.now() - currentWorkout.startTime) / 1000),
-      rpeOverall,
+      durationSec: Math.round((now - currentWorkout.startTime) / 1000),
+      rpeOverall: opts.rpeOverall,
     };
 
-    const finished = applyIncompletePolicy(baseFinished);
+    const finished = applyIncompletePolicy(baseFinished, opts.policy);
 
-    // compute volume after policy
     const totalVolume = computeWorkoutVolume(finished);
     const finished2: WorkoutSession = { ...finished, totalVolume };
 
-    appendEvent('workout_finished', { totalVolume, rpeOverall, incompletePolicy });
+    appendEvent('workout_finished', { totalVolume, rpeOverall: opts.rpeOverall, incompletePolicy: opts.policy });
 
-    // 1) Try syncing workout to DB (keep draft if fails)
-    try {
-      const token = localStorage.getItem('relay-token');
+    const completePayload = { workout: finished2, events, restByExerciseId };
 
-      const res = await fetch('/api/workouts/gym/complete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ workout: finished2, events, restByExerciseId }),
-      });
-
-      if (!res.ok) throw new Error(`sync failed: ${res.status}`);
-
-      // 2) Template operations (best-effort)
-      try {
-        await createOrUpdateTemplate(finished2);
-      } catch (e) {
-        console.warn('Template save/update failed', e);
-      }
-
-      // ✅ only clear if sync succeeded
-      clearWorkoutDraft(finished2.id);
-    } catch (e) {
-      console.warn('Workout sync failed, keeping draft.', e);
+    // Always store locally for offline history
+    if (user?.id) {
+      upsertWorkouts(user.id, [{ id: finished2.id, module: finished2.module, data: finished2 }]);
     }
 
-    // Update local UI
+    let pushed = false;
+
+    try {
+      if (!token || !user?.id) throw new Error('No auth');
+      await apiPushGymComplete({ token, payload: completePayload });
+      pushed = true;
+    } catch (e) {
+      console.warn('Workout push failed. Queueing pending sync.', e);
+      if (user?.id) enqueuePending(user.id, finished2.id, completePayload);
+    }
+
+    // Templates: queue offline if needed
+    try {
+      if (opts.saveAsTemplate && user?.id) {
+        const name = (opts.templateName?.trim() || `Template ${new Date(finished2.startTime).toLocaleDateString('en-US')}`);
+
+        const body = {
+          dataVersion: 1,
+          id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          module: 'GYM',
+          name,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          data: {
+            exercises: finished2.logs.map((l) => ({
+              exerciseId: l.exerciseId,
+              exerciseName: l.exerciseName,
+              targetSets: l.sets.length,
+              restSec: l.restSecDefault ?? 120,
+              sets: l.sets.map((s) => ({
+              reps: s.reps ?? 0,
+              weight: s.weight ?? 0,
+              })),
+            })),
+          },
+        };
+
+        const payload = {
+          method: 'POST',
+          endpoint: '/api/templates/gym',
+          body,
+        };
+
+        if (pushed && token) {
+          // best-effort immediately
+          await fetch(payload.endpoint, {
+            method: payload.method,
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(payload.body),
+          }).catch(() => {
+            // queue if fails
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+          });
+        } else {
+          // queue offline
+          const { enqueuePendingTemplate } = await import('../../data/sync/pendingTemplates');
+          enqueuePendingTemplate(user.id, body.id, payload);
+        }
+      }
+
+      if (opts.updateUsedTemplate && finished2.templateIdUsed && user?.id) {
+        const body = {
+          name: null,
+          dataVersion: 1,
+          data: {
+            exercises: finished2.logs.map((l) => ({
+              exerciseId: l.exerciseId,
+              exerciseName: l.exerciseName,
+              targetSets: l.sets.length,
+              restSec: l.restSecDefault ?? 120,
+              sets: l.sets.map((s) => ({
+                reps: s.reps ?? 0,
+                weight: s.weight ?? 0,
+              })),
+            })),
+          },
+        };
+
+        const payload = {
+          method: 'PUT',
+          endpoint: `/api/templates/gym/${finished2.templateIdUsed}`,
+          body,
+        };
+
+        if (pushed && token) {
+          await fetch(payload.endpoint, {
+            method: payload.method,
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(payload.body),
+          }).catch(async () => {
+            const { enqueuePendingTemplate } = await import('../../data/sync/pendingTemplates');
+            enqueuePendingTemplate(user.id, `upd-${finished2.templateIdUsed}`, payload);
+          });
+        } else {
+          const { enqueuePendingTemplate } = await import('../../data/sync/pendingTemplates');
+          enqueuePendingTemplate(user.id, `upd-${finished2.templateIdUsed}`, payload);
+        }
+      }
+    } catch (e) {
+      console.warn('Template queue/save failed', e);
+    }
+
+    // Draft is done; don’t resurrect
+    clearWorkoutDraft(finished2.id);
+
     setWorkoutHistory([finished2, ...workoutHistory]);
     setCurrentWorkout(null);
     setShowFinish(false);
     setFinishing(false);
+
+    // optional: after successful push, refresh cache from server
+    if (pushed && user?.id && token) {
+      syncNow({ userId: user.id, token, module: 'GYM' }).catch(() => {});
+    }
+
     navigate('/activities/gym', { replace: true });
   };
+
+  const onConfirmFinishFromModal = async (opts: {
+    incompleteAction: 'delete' | 'markComplete';
+    rpeOverall?: number;
+    saveAsTemplate: boolean;
+    templateName?: string;
+    updateUsedTemplate: boolean;
+  }) => {
+    const policy: IncompletePolicy = opts.incompleteAction === 'delete' ? 'delete' : 'complete';
+    await finishWorkoutWithOptions({
+      policy,
+      rpeOverall: opts.rpeOverall,
+      saveAsTemplate: opts.saveAsTemplate,
+      templateName: opts.templateName,
+      updateUsedTemplate: opts.updateUsedTemplate,
+    });
+  };
+
+
 
   const cancelWorkout = () => {
     if (!currentWorkout) return;
@@ -787,35 +921,14 @@ const ActiveWorkout: React.FC = () => {
       )}
 
       {/* Exercise Picker Modal */}
-      {showExercisePicker && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex flex-col justify-end p-4">
-          <div className="bg-[var(--bg)] text-[var(--text)] rounded-[40px] p-6 max-h-[80vh] overflow-y-auto w-full max-w-md mx-auto border border-[var(--border)] animate-in slide-in-from-bottom duration-300">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-2xl font-black italic">LIBRARY</h3>
-              <button onClick={() => setShowExercisePicker(false)} className="p-2 bg-[var(--bg-card)] border border-[var(--border)] rounded-full">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {EXERCISES.map((ex) => (
-                <button
-                  key={ex.id}
-                  onClick={() => addExercise(ex.id)}
-                  className="w-full p-5 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl flex justify-between items-center hover:bg-[var(--glass-strong)] transition-colors"
-                >
-                  <div className="text-left">
-                    <p className="font-black">{ex.name}</p>
-                    <p className="text-[10px] font-black uppercase text-[var(--text-muted)] tracking-widest">{ex.muscleGroup}</p>
-                  </div>
-                  <Plus size={20} className="text-[var(--primary)]" />
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
+      <ExerciseLibraryModal
+        open={showExercisePicker}
+        title="ADD EXERCISES"
+        exercises={EXERCISES}
+        mode="single"
+        onPick={(id) => addExercise(id)}   // <- deine bestehende Funktion
+        onClose={() => setShowExercisePicker(false)}
+      />
       {/* Rest config modal */}
       {restConfigForExerciseId && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex flex-col justify-end p-4">
@@ -858,109 +971,16 @@ const ActiveWorkout: React.FC = () => {
       )}
 
       {/* Finish Modal */}
-      {showFinish && (
-        <div className="fixed inset-0 z-[130] bg-black/60 backdrop-blur-sm flex items-end justify-center p-4">
-          <div className="w-full max-w-md rounded-[40px] border border-[var(--border)] bg-[var(--bg)] p-6 animate-in slide-in-from-bottom duration-300">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-xl font-[900] italic text-[var(--text)]">FINISH WORKOUT</div>
-              <button onClick={() => setShowFinish(false)} className="p-2 rounded-full bg-[var(--bg-card)] border border-[var(--border)]">
-                <X size={18} />
-              </button>
-            </div>
-
-            {incompleteCount > 0 && (
-              <div className="rounded-3xl border border-[var(--border)] bg-[var(--bg-card)] p-4 mb-4">
-                <div className="text-[10px] font-[900] uppercase tracking-widest text-[var(--text-muted)]">
-                  Incomplete sets: {incompleteCount}
-                </div>
-
-                <div className="mt-3 space-y-2">
-                  <RadioRow
-                    active={incompletePolicy === 'delete'}
-                    onClick={() => setIncompletePolicy('delete')}
-                    title="Delete incomplete sets (recommended)"
-                  />
-                  <RadioRow
-                    active={incompletePolicy === 'complete'}
-                    onClick={() => setIncompletePolicy('complete')}
-                    title="Mark incomplete as completed (uses ghost if empty)"
-                  />
-                  <RadioRow
-                    active={incompletePolicy === 'keep'}
-                    onClick={() => setIncompletePolicy('keep')}
-                    title="Keep incomplete as incomplete"
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="rounded-3xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <div className="text-[10px] font-[900] uppercase tracking-widest text-[var(--text-muted)]">RPE (overall)</div>
-              <div className="mt-2 flex items-center justify-between">
-                <div className="text-3xl font-[900] italic text-[var(--primary)]">{rpeOverall}</div>
-                <div className="text-[10px] font-[900] uppercase tracking-widest text-[var(--text-muted)]">1–10</div>
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={10}
-                value={rpeOverall}
-                onChange={(e) => setRpeOverall(parseInt(e.target.value, 10))}
-                className="w-full mt-3"
-              />
-            </div>
-
-            {/* Template actions */}
-            <div className="mt-4 rounded-3xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <div className="flex items-center justify-between">
-                <div className="text-[10px] font-[900] uppercase tracking-widest text-[var(--text-muted)]">
-                  Templates
-                </div>
-              </div>
-
-              <label className="mt-3 flex items-center gap-3">
-                <input type="checkbox" checked={saveAsTemplate} onChange={(e) => setSaveAsTemplate(e.target.checked)} />
-                <span className="text-sm font-bold text-[var(--text)]">Save as template</span>
-              </label>
-
-              {saveAsTemplate && (
-                <input
-                  value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
-                  placeholder="Push Day A"
-                  className="mt-3 w-full rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-[var(--text)] placeholder:text-[var(--text-muted)]"
-                />
-              )}
-
-              {!!currentWorkout.templateIdUsed && (
-                <label className="mt-3 flex items-center gap-3">
-                  <input type="checkbox" checked={updateTemplate} onChange={(e) => setUpdateTemplate(e.target.checked)} />
-                  <span className="text-sm font-bold text-[var(--text)]">Update used template</span>
-                </label>
-              )}
-            </div>
-
-            <button
-              onClick={finishWorkout}
-              disabled={finishing}
-              className="mt-5 w-full rounded-2xl bg-[var(--primary)] text-white py-4 font-[900] uppercase tracking-widest text-[10px] disabled:opacity-60"
-            >
-              {finishing ? 'SAVING…' : 'CONFIRM FINISH'}
-            </button>
-
-            <button
-              onClick={() => setShowFinish(false)}
-              className="mt-3 w-full rounded-2xl border border-[var(--border)] bg-[var(--bg)] py-4 font-[900] uppercase tracking-widest text-[10px] text-[var(--text-muted)]"
-            >
-              Cancel
-            </button>
-
-            <div className="mt-4 flex items-center justify-center gap-2 text-[9px] font-[900] uppercase tracking-widest text-[var(--text-muted)]">
-              <Save size={14} /> Workouts sync to DB when online
-            </div>
-          </div>
-        </div>
+      {showFinish && currentWorkout && (
+        <FinishWorkoutModal
+          open={showFinish}
+          onClose={() => setShowFinish(false)}
+          workout={currentWorkout}
+          templateIdUsed={currentWorkout.templateIdUsed ?? null}
+          onConfirmFinish={onConfirmFinishFromModal}
+        />
       )}
+      
     </div>
   );
 };

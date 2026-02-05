@@ -46,6 +46,18 @@ async function main() {
     },
   });
 
+  const defaultuser = await prisma.user.upsert({
+    where: { username: 'user' },
+    update: {},
+    create: {
+      username: 'user',
+      displayName: 'User',
+      role: UserRole.USER,
+      features: [],
+      passwordHash: await hash('user123'),
+    },
+  });
+
   // Built-in Exercises
   await prisma.exercise.createMany({
     data: [
@@ -95,6 +107,7 @@ async function main() {
     admin: admin.username,
     dev: dev.username,
     tester: tester.username,
+    user: defaultuser.username,
   });
 }
 

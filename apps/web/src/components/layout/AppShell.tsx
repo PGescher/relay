@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Home, MessageSquare, Zap, User, LogOut, Sparkles, LucideIcon } from 'lucide-react';
 import ThemeToggle from '../ui/ThemeToggle';
+import { DevDataSourceToggle } from '../ui/DevDataToggle';
 import { useApp } from '../../context/AppContext';
+import { useAuth } from '../../context/AuthContext';
 
 interface AppShellProps {
-  children: React.ReactNode;
   onLogout: () => void;
 }
 
@@ -19,15 +20,16 @@ interface NavLinkProps {
 
 const TABS = ['/feed', '/home', '/activities'];
 
-const AppShell: React.FC<AppShellProps> = ({ children, onLogout }) => {
+const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
   const { currentWorkout } = useApp();
+  const { user } = useAuth(); // ✅ hook inside component
+
   const location = useLocation();
   const navigate = useNavigate();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [elapsed, setElapsed] = useState(0);
 
   const isRootPath = ['/home'].includes(location.pathname);
-
   const showLivePill = currentWorkout && location.pathname !== '/activities/gym/active';
 
   useEffect(() => {
@@ -58,7 +60,6 @@ const AppShell: React.FC<AppShellProps> = ({ children, onLogout }) => {
   };
 
   const goBack = () => {
-    // If user opened deep link directly, history can be empty-ish
     if (window.history.length > 1) {
       navigate(-1);
     } else {
@@ -96,13 +97,14 @@ const AppShell: React.FC<AppShellProps> = ({ children, onLogout }) => {
           >
             <div className="w-1.5 h-1.5 bg-white rounded-full" />
             <span className="text-[10px] font-black text-white uppercase tracking-tighter">
-              LIVE SESSION
+              LIVE SESSION {formatShortTime(elapsed)}
             </span>
           </Link>
         )}
 
         <div className="flex items-center gap-3">
           <ThemeToggle />
+          <DevDataSourceToggle user={user} />
           <button
             type="button"
             onClick={() => setShowProfileMenu(!showProfileMenu)}
@@ -122,18 +124,13 @@ const AppShell: React.FC<AppShellProps> = ({ children, onLogout }) => {
         onDragEnd={handleSwipe}
         className="flex-1 w-full max-w-xl mx-auto touch-pan-y pt-16"
       >
-        {children}
+        <Outlet /> {/* ✅ replaces children */}
       </motion.main>
 
       {/* Bottom Nav */}
       <nav className="fixed bottom-0 left-0 right-0 bg-[var(--bg)]/80 backdrop-blur-md border-t border-[var(--border)] h-20 pb-4 z-50 grid grid-cols-3 items-center">
         <div className="flex justify-center">
-          <NavLink
-            to="/feed"
-            icon={MessageSquare}
-            active={location.pathname === '/feed'}
-            label="Feed"
-          />
+          <NavLink to="/feed" icon={MessageSquare} active={location.pathname === '/feed'} label="Feed" />
         </div>
 
         <div className="flex justify-center">

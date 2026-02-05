@@ -3,11 +3,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { LoginSchema } from '@relay/shared';
 import { useAuth } from '../../context/AuthContext'; 
 
-
-export default function LoginPage() {
+export default function LoginEmailPage() {
   const nav = useNavigate();
   const { login } = useAuth();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +16,7 @@ export default function LoginPage() {
     setError(null);
 
     const parsed = LoginSchema.safeParse({
-      identifier: username.trim(),
+      identifier: email.trim(), // identifier = email
       password,
     });
     if (!parsed.success) {
@@ -53,7 +52,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md bg-[var(--glass)] backdrop-blur-xl border border-[var(--border)] rounded-[40px] p-8">
         <h1 className="text-2xl font-black italic uppercase tracking-tight">Login</h1>
         <p className="mt-2 text-[10px] font-black uppercase tracking-[0.35em] text-[var(--text-muted)]">
-          Username Login (Standard)
+          Email Login (Alternative)
         </p>
 
         {error && (
@@ -64,9 +63,9 @@ export default function LoginPage() {
 
         <form onSubmit={onSubmit} className="mt-6 space-y-3">
           <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="email"
             className="w-full rounded-2xl px-4 py-4 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]"
           />
 
@@ -88,7 +87,7 @@ export default function LoginPage() {
 
         <div className="mt-6 flex justify-between text-xs font-black uppercase tracking-widest text-[var(--text-muted)]">
           <Link to="/signup" className="hover:text-[var(--primary)]">Create Account</Link>
-          <Link to="/login-email" className="hover:text-[var(--primary)]">Use Email</Link>
+          <Link to="/login" className="hover:text-[var(--primary)]">Use Username</Link>
         </div>
       </div>
     </div>
