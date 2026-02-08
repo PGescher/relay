@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Calendar, ChevronRight, Clock, Award, Trash2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import SyncButton from '../../components/ui/SyncButton';
+import { WorkoutStatus } from '@relay/shared';
 
 const GymHistory: React.FC = () => {
   // ✅ Extract both workoutHistory AND setWorkoutHistory
@@ -67,7 +68,7 @@ const GymHistory: React.FC = () => {
       ) : (
         <div className="space-y-4">
           {workoutHistory
-            .filter((w) => w.status === 'completed')
+            .filter((w) => w.status === WorkoutStatus.completed)
             .map((workout) => (
               <Link
                 key={workout.id}

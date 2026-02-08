@@ -287,10 +287,13 @@ pnpm exec prisma migrate dev --name init
 pnpm exec prisma generate
 pnpm exec prisma db seed
 
+
+
+
 #### Fresh Baseline
 cd ~/projects/Relay/apps/api
 
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/relay"
+
 
 pnpm exec prisma format
 pnpm exec prisma migrate dev --name init
@@ -304,7 +307,16 @@ docker compose -f docker-compose-prod.yml down
 docker volume rm <dein_db_data_volume_name>
 docker compose -f docker-compose-prod.yml up -d
 
+#### or:
 
+docker compose -f docker-compose.prod.yml run --rm migrate npx prisma migrate reset --force
+
+Find Schema:
+
+docker compose -f docker-compose.prod.yml run --rm migrate find / -name "schema.prisma"
+
+insert found here:
+docker compose -f docker-compose.prod.yml run --rm migrate npx prisma migrate reset --schema=[FOUND PATH] --force
 
 # Datenbank
 
@@ -339,7 +351,7 @@ pnpm exec prisma studio --port 5555 --browser none
 ## Prod (NAS)
 
 Per SSH zu NAS
-docker compose -f docker-compose-prod.yml exec api sh
+docker compose -f docker-compose.prod.yml exec api sh
 pnpm exec prisma studio --hostname 0.0.0.0 --port 5555 --browser none
 
 Vom PC einen SSH Tunnel öffnen

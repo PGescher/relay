@@ -129,7 +129,12 @@ export interface ExerciseLog {
   sets: SetLog[];
 }
 
-export type WorkoutStatus = 'active' | 'completed' | 'cancelled';
+export enum WorkoutStatus {
+  planned,
+  active,
+  completed
+}
+
 
 export interface WorkoutSession {
   dataVersion: 1;

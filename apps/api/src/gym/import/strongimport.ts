@@ -7,10 +7,44 @@ import { requireAuth, type AuthedRequest } from '../../authMiddleware.js'; // Ad
 
 const router = Router();
 
-// IMPORT: POST /api/import/strong
-router.post('/strong', async (req, res) => {
-  const { userId, rows } = req.body;
+const parseNum = (val: any) => {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return val;
+  const s = String(val).trim();
+  if (!s) return null;
+  const n = Number.parseFloat(s.replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+};
 
+function parseStrongDurationToSeconds(input: unknown): number | null {
+  if (!input) return null;
+  const s = String(input).trim().toLowerCase();
+  if (!s) return null;
+
+  // "51min" | "1h 1min" | "2h 3min" | "42h 47min"
+  const m = s.match(/^(?:(\d+)\s*h)?\s*(?:(\d+)\s*min)?$/i);
+  if (!m) return null;
+
+  const hours = m[1] ? Number(m[1]) : 0;
+  const mins = m[2] ? Number(m[2]) : 0;
+
+  const total = hours * 3600 + mins * 60;
+  return Number.isFinite(total) && total > 0 ? total : null;
+}
+
+
+// Strong's Datum has no timezone. Node will interpret it as server-local time.
+// If you want it treated as Europe/Berlin explicitly, do it with luxon/date-fns-tz.
+// For now keep your behavior consistent:
+function parseStrongDate(input: unknown): Date {
+  return new Date(String(input));
+}
+
+// TODO: NEEDS UPDATE!!!
+// IMPORT: POST /api/import/strong
+router.post('/strong', requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.userId!; // Set by requireAuth
+  const { workouts, rows } = req.body;
   try {
     // 1. Group rows by Workout (Date + Name)
     const workoutsMap = new Map<string, any>();
@@ -112,18 +146,25 @@ router.post('/strong-batch', requireAuth, async (req: AuthedRequest, res) => {
     await prisma.$transaction(async (tx) => {
       for (const w of workouts) {
         if (!w.rows || w.rows.length === 0) continue;
+        
         const firstRow = w.rows[0];
         const startTime = new Date(firstRow.Datum);
 
+        const durSec = parseStrongDurationToSeconds(firstRow.Dauer);
+        const endTime = durSec ? new Date(startTime.getTime() + durSec * 1000) : startTime;
+
+
         // ✅ REDUNDANCY CHECK: Check if this workout already exists
         const existingWorkout = await tx.workout.findFirst({
-        where: {
-            userId,
-            startTime: startTime,
-            module: "GYM",
-            deletedAt: null // Only skip if it hasn't been deleted
-        }
+            where: {
+                userId,
+                module: "GYM",
+                deletedAt: null,
+                startTime,
+                name: w.name || firstRow["Workout-Name"] || "Strong Import",
+            }
         });
+
 
         if (existingWorkout) {
         console.log(`Skipping duplicate workout: ${firstRow.Datum}`);
@@ -131,99 +172,154 @@ router.post('/strong-batch', requireAuth, async (req: AuthedRequest, res) => {
         }
 
         const workoutId = randomUUID();
-
-        // Helper to parse Strong's number format (0.0 or 0,0)
-        const parseNum = (val: any) => {
-          if (val === null || val === undefined || val === "" || val === "Ruhezeit") return 0;
-          if (typeof val === 'number') return val;
-          return parseFloat(String(val).replace(',', '.'));
+        
+        // group rows by exercise, preserving the original order and attaching rest rows
+        type ImportedSet = {
+        reps: number | null;
+        weight: number | null;
+        rpe: number | null;
+        notes: string | null;
+        durationSec: number | null;
+        distanceM: number | null;
+        restActualSec: number | null;
+        completedAt: Date;
         };
 
-        // 1. Group rows by exercise
-        const exerciseGroups = new Map<string, any[]>();
+        const exerciseGroups = new Map<string, ImportedSet[]>();
+
         for (const row of w.rows) {
-          if (row["Reihenfolge festlegen"] === "Ruhezeit") continue;
-          if (!exerciseGroups.has(row["Name der Übung"])) exerciseGroups.set(row["Name der Übung"], []);
-          exerciseGroups.get(row["Name der Übung"])?.push(row);
+        const exName = row["Name der Übung"];
+        if (!exName) continue;
+
+        if (!exerciseGroups.has(exName)) exerciseGroups.set(exName, []);
+        const sets = exerciseGroups.get(exName)!;
+
+        const isRest = row["Reihenfolge festlegen"] === "Ruhezeit";
+
+        if (isRest) {
+            // attach rest to previous set if possible
+            const restSec = parseNum(row.Sekunden);
+            if (sets.length > 0 && restSec !== null) {
+            sets[sets.length - 1].restActualSec = Math.round(restSec);
+            }
+            continue;
         }
+
+        const reps = parseNum(row["Wiederh."]);
+        const weight = parseNum(row.Gewicht);
+        const rpe = parseNum(row.RPE);
+        const seconds = parseNum(row.Sekunden);
+        const distance = parseNum(row.Entfernung);
+
+        // Strong distance looks like km -> store meters
+        const distanceM = distance !== null ? Math.round(distance * 1000) : null;
+
+        sets.push({
+            reps: reps !== null ? Math.round(reps) : null,
+            weight: weight !== null ? weight : null,
+            rpe: rpe !== null ? rpe : null,
+            notes: row.Notizen ? String(row.Notizen) : null,
+            durationSec: seconds !== null ? Math.round(seconds) : null,
+            distanceM,
+            restActualSec: null,
+            completedAt: new Date(row.Datum),
+        });
+        }
+
 
         // 2. Prepare the JSON "data" snapshot (to match your existing workout schema)
         const logs = Array.from(exerciseGroups.entries()).map(([exName, sets]) => ({
-          exerciseId: `imported_${exName.toLowerCase().replace(/\s+/g, '_')}`,
-          exerciseName: exName,
-          sets: sets.map((s, idx) => ({
-            id: randomUUID(),
-            reps: Math.round(parseNum(s["Wiederh."])),
-            weight: parseNum(s.Gewicht),
-            isCompleted: true,
-            completedAt: new Date(s.Datum).getTime(),
-          }))
+            exerciseId: `imported_${exName.toLowerCase().replace(/\s+/g, '_')}`,
+            exerciseName: exName,
+            sets: sets.map((s) => ({
+                id: randomUUID(),
+                reps: s.reps ?? 0,
+                weight: s.weight ?? 0,
+                rpe: s.rpe ?? undefined,
+                isCompleted: true,
+                completedAt: s.completedAt.getTime(),
+                // optional extras if your app reads them:
+                durationSec: s.durationSec ?? undefined,
+                distanceM: s.distanceM ?? undefined,
+                restActualSec: s.restActualSec ?? undefined,
+                notes: s.notes ?? undefined,
+            })),
         }));
+
 
         // 3. Create the base Workout with the JSON data field
         const workout = await tx.workout.create({
-          data: {
-            id: workoutId,
-            userId,
-            name: w.name || "Strong Import",
-            module: "GYM",
-            status: "COMPLETED",
-            startTime: new Date(firstRow.Datum),
-            endTime: new Date(firstRow.Datum), // Strong doesn't provide exact end time per row
             data: {
-              dataVersion: 1,
-              id: workoutId,
-              module: "GYM",
-              status: "completed",
-              startTime: new Date(firstRow.Datum).getTime(),
-              endTime: new Date(firstRow.Datum).getTime(),
-              notes: firstRow["Workout-Notizen"] || "",
-              logs: logs
+                id: workoutId,
+                userId,
+                name: w.name || firstRow["Workout-Name"] || "Strong Import",
+                module: "GYM",
+                status: "completed", // ✅ enum now
+                startTime,
+                endTime,
+                data: {
+                dataVersion: 1,
+                id: workoutId,
+                module: "GYM",
+                status: "completed",
+                startTime: startTime.getTime(),
+                endTime: endTime.getTime(),
+                durationSec: durSec ?? undefined,
+                notes: firstRow["Workout-Notizen"] || "",
+                logs,
+                },
+                gym: { create: { notes: firstRow["Workout-Notizen"] || "" } },
             },
-            gym: { create: { notes: firstRow["Workout-Notizen"] || "" } }
-          },
-          include: { gym: true }
-        });
+            include: { gym: true },
+            });
+
+
 
         // 4. Populate Structured Gym Tables (WorkoutGymExercise & Sets)
         const gymId = workout.gym!.id;
         let exOrder = 0;
 
         for (const [exName, sets] of exerciseGroups) {
-          const exerciseId = `imported_${exName.toLowerCase().replace(/\s+/g, '_')}`;
-          
-          await tx.exercise.upsert({
-            where: { id: exerciseId },
-            update: {},
-            create: {
-              id: exerciseId,
-              name: exName,
-              userId: null, // Global exercise
-              isCustom: false,
-            }
-          });
+            const exerciseId = `imported_${exName.toLowerCase().replace(/\s+/g, '_')}`;
 
-          const gymEx = await tx.workoutGymExercise.create({
-            data: {
-              workoutGymId: gymId,
-              exerciseId: exerciseId,
-              order: exOrder++,
-            }
-          });
+            await tx.exercise.upsert({
+                where: { id: exerciseId },
+                update: {},
+                create: {
+                id: exerciseId,
+                name: exName,
+                userId: null,
+                isCustom: false,
+                },
+            });
 
-          await tx.workoutGymSet.createMany({
-            data: sets.map((s: any, idx: number) => ({
-              workoutGymExerciseId: gymEx.id,
-              reps: Math.round(parseNum(s["Wiederh."])),
-              weight: parseNum(s.Gewicht),
-              rpe: s.RPE ? parseNum(s.RPE) : null,
-              notes: s.Notizen || "",
-              order: idx,
-              isCompleted: true,
-              completedAt: new Date(s.Datum),
-            }))
-          });
-        }
+            const gymEx = await tx.workoutGymExercise.create({
+                data: {
+                workoutGymId: workout.gym!.id,
+                exerciseId,
+                order: exOrder++,
+                },
+            });
+
+            await tx.workoutGymSet.createMany({
+                data: sets.map((s, idx) => ({
+                workoutGymExerciseId: gymEx.id,
+                reps: s.reps,
+                weight: s.weight,
+                rpe: s.rpe,
+                notes: s.notes || "",
+                order: idx,
+                isCompleted: true,
+                completedAt: s.completedAt,
+
+                // ✅ new:
+                durationSec: s.durationSec,
+                distanceM: s.distanceM,
+                restActualSec: s.restActualSec,
+                })),
+            });
+            }
+
       }
     });
 

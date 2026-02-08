@@ -1,18 +1,15 @@
 import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Zap, TrendingUp, ArrowRight, Flame } from 'lucide-react';
-import { getVolume, getConsistency } from '../gym-tracker/analyticsUtils';
+import { Users, Zap, TrendingUp, ArrowRight, Flame, Shield, Activity } from 'lucide-react';
+import { getVolume, getStreakData, getScientificInsights } from '../gym-tracker/analyticsUtils';
 import { useApp } from '../../context/AppContext';
 
-interface HomeHubProps {
-  user: any;
-}
-
-const HomeHub: React.FC<HomeHubProps> = ({ user }) => {
+const HomeHub: React.FC<{ user: any }> = ({ user }) => {
   const { workoutHistory } = useApp();
   const navigate = useNavigate();
 
-  const consistency = useMemo(() => getConsistency(workoutHistory), [workoutHistory]);
+  const streak = useMemo(() => getStreakData(workoutHistory), [workoutHistory]);
+  const sci = useMemo(() => getScientificInsights(workoutHistory), [workoutHistory]);
   
   const stats = useMemo(() => {
     const monthStart = new Date();
@@ -24,149 +21,93 @@ const HomeHub: React.FC<HomeHubProps> = ({ user }) => {
     };
   }, [workoutHistory]);
 
-
   return (
-    <div className="px-4 md:px-6 py-6 space-y-6">
-      {/* Hero Card */}
-      <div className="rounded-[32px] border border-[var(--border)] bg-[var(--glass)] p-7 shadow-2xl">
-        <div className="flex justify-between items-start">
+    <div className="px-4 py-6 space-y-6 pb-24">
+      
+      {/* HERO STREAK CARD */}
+      <div className="relative rounded-[40px] bg-gradient-to-br from-[#0f172a] to-[#1e293b] p-8 text-white shadow-2xl overflow-hidden border border-white/5">
+        <div className="relative z-10 flex justify-between items-start">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-muted)]">Athlete Status</p>
-            <h2 className="text-4xl font-black italic uppercase text-[var(--text)] mt-2">
-              {user?.displayName || 'Member'}<span className="text-[var(--primary)]">.</span>
-            </h2>
-          </div>
-          <div className="flex flex-col items-end">
-            <div className="flex gap-1">
-              {consistency.map((day, i) => (
-                <div 
-                  key={i} 
-                  className={`w-2 h-6 rounded-full transition-all ${day.active ? 'bg-[var(--primary)] shadow-[0_0_10px_var(--primary)]' : 'bg-[var(--border)]'}`} 
-                />
-              ))}
+            <div className="flex items-center gap-2 mb-4">
+              <div className={`p-2 rounded-xl ${streak.isActiveToday ? 'bg-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.4)]' : 'bg-slate-700'}`}>
+                <Flame size={18} fill={streak.isActiveToday ? "white" : "none"} />
+              </div>
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Activity Streak</span>
             </div>
-            <p className="text-[9px] font-black uppercase mt-2 text-[var(--text-muted)]">7-Day Consistency</p>
+            
+            <div className="flex items-end gap-3">
+              <h2 className="text-7xl font-[1000] italic leading-none tracking-tighter">{streak.currentStreak}</h2>
+              <p className="text-sm font-black uppercase text-orange-500 pb-2 tracking-widest">Days</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-end gap-4">
+             <div className="text-right">
+                <p className="text-[8px] font-black uppercase text-slate-500 tracking-widest">Readiness</p>
+                <p className="text-xs font-black text-emerald-400 uppercase italic">{sci.readiness}</p>
+             </div>
+             <div className="flex gap-1 h-8 items-end">
+                {streak.weekHistory.map((day, i) => (
+                  <div key={i} className={`w-1.5 rounded-full ${day.active ? 'bg-orange-500 h-full' : 'bg-slate-800 h-1/2'}`} />
+                ))}
+             </div>
           </div>
         </div>
+        <Flame size={180} className="absolute -right-12 -bottom-12 text-white/5 rotate-12 pointer-events-none" />
+      </div>
 
-        {/* High-Level Metrics */}
-        <div className="grid grid-cols-2 gap-4 mt-8">
-          <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-4">
-            <p className="text-[9px] font-black uppercase text-[var(--text-muted)]">This Month</p>
-            <p className="text-2xl font-black italic">{stats.count} <span className="text-sm font-bold text-[var(--text-muted)]">Sessions</span></p>
-          </div>
-          <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-4">
-            <p className="text-[9px] font-black uppercase text-[var(--text-muted)]">Monthly Volume</p>
-            <p className="text-2xl font-black italic">{Math.round(stats.monthVolume / 1000)}k <span className="text-sm font-bold text-[var(--text-muted)]">kg</span></p>
-          </div>
+      {/* STATS OVERVIEW */}
+      <div className="grid grid-cols-2 gap-4 px-2">
+        <div className="bg-[var(--glass)] border border-[var(--border)] rounded-3xl p-5 relative overflow-hidden">
+          <p className="text-[9px] font-black uppercase text-[var(--text-muted)] tracking-widest mb-1">Monthly Load</p>
+          <p className="text-2xl font-black italic">{(stats.monthVolume / 1000).toFixed(1)}k <span className="text-xs text-[var(--primary)]">kg</span></p>
+          <Activity size={40} className="absolute -right-4 -bottom-4 opacity-5" />
+        </div>
+        <div className="bg-[var(--glass)] border border-[var(--border)] rounded-3xl p-5 relative overflow-hidden">
+          <p className="text-[9px] font-black uppercase text-[var(--text-muted)] tracking-widest mb-1">Intensity</p>
+          <p className="text-2xl font-black italic">{sci.intensity} <span className="text-xs text-orange-500">RPE</span></p>
+          <Shield size={40} className="absolute -right-4 -bottom-4 opacity-5" />
         </div>
       </div>
-      {/* ... rest of your panels */}
-        <div className="px-7 pt-7 pb-6">
-          <div className="flex items-start justify-between gap-6">
-            <div className="min-w-0">
-              <p className="text-[10px] font-[900] uppercase tracking-[0.55em] text-[var(--text-muted)]">
-                Good to see you
-              </p>
 
-              <h2 className="mt-3 text-4xl md:text-5xl font-[900] italic tracking-tighter leading-[0.9] uppercase">
-                <span className="text-[var(--text)] drop-shadow-[0_10px_30px_rgba(0,0,0,0.10)]">
-                  {user?.name || 'Tribe'}
-                </span>
-                <span className="block text-[var(--primary)] tracking-[-0.05em] drop-shadow-[0_4px_15px_rgba(0,0,0,0.18)]">
-                  MEMBER.
-                </span>
-              </h2>
-            </div>
-
-            <div className="shrink-0">
-              <div
-                className={[
-                  "w-12 h-12 rounded-2xl",
-                  "border border-[var(--border)]",
-                  "bg-[var(--glass)]",
-                  "flex items-center justify-center",
-                  "shadow-[0_0_40px_var(--glow)]",
-                ].join(" ")}
-              >
-                <TrendingUp className="text-[var(--text-muted)]" size={22} />
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-7">
-            <p className="text-[10px] font-[900] uppercase tracking-[0.55em] text-[var(--text-muted)]">
-              Weekly streak
-            </p>
-
-            <div className="mt-2 flex items-center gap-3">
-              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] px-4 py-2">
-                <Flame className="w-4 h-4 text-[var(--primary)]" />
-                <span className="text-sm font-[900] uppercase tracking-[0.25em] text-[var(--text)]">
-                  4 days
-                </span>
-              </div>
-
-              <span className="text-[10px] font-[900] uppercase tracking-[0.45em] text-[var(--text-muted)]">
-                keep it burning
-              </span>
-            </div>
-          </div>
-        <div className="h-[2px] bg-gradient-to-r from-transparent via-[var(--primary)]/30 to-transparent" />
-      </div>
-
-      {/* Panels */}
-      <div className="grid grid-cols-1 gap-4">
+      {/* NAVIGATION PANELS */}
+      <div className="grid grid-cols-1 gap-3">
         <HubPanel
-          title="Activities"
+          title="Protocol"
           subtitle="Gym, Run, Cycle"
-          icon={<Zap className="w-6 h-6 text-[var(--primary)]" />}
+          icon={<Zap className="w-6 h-6 text-orange-500" />}
           onClick={() => navigate('/activities')}
         />
         <HubPanel
-          title="Tribe Feed"
-          subtitle="See what others are doing"
-          icon={<Users className="w-6 h-6 text-[var(--primary)]" />}
+          title="Intelligence"
+          subtitle="DNA & Evolution"
+          icon={<TrendingUp className="w-6 h-6 text-[var(--primary)]" />}
+          onClick={() => navigate('/analytics')}
+        />
+        <HubPanel
+          title="Social"
+          subtitle="Tribe Deployments"
+          icon={<Users className="w-6 h-6 text-purple-500" />}
           onClick={() => navigate('/feed')}
         />
       </div>
     </div>
-   );
+  );
 };
 
-const HubPanel: React.FC<{
-  title: string;
-  subtitle: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-}> = ({ title, subtitle, icon, onClick }) => (
+const HubPanel: React.FC<{ title: string; subtitle: string; icon: React.ReactNode; onClick: () => void; }> = ({ title, subtitle, icon, onClick }) => (
   <button
     onClick={onClick}
-    className={[
-      "group w-full text-left",
-      "rounded-[28px] border border-[var(--border)] bg-[var(--glass)] backdrop-blur-xl",
-      "shadow-[0_20px_60px_rgba(0,0,0,0.14)]",
-      "px-6 py-6 flex items-center gap-5",
-      "hover:bg-[var(--glass-strong)] hover:translate-y-[-1px]",
-      "active:scale-[0.98] transition-all",
-    ].join(' ')}
+    className="group w-full flex items-center gap-5 p-6 rounded-[32px] border border-[var(--border)] bg-[var(--glass)] transition-all active:scale-[0.98]"
   >
-    <div className="w-14 h-14 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] flex items-center justify-center shadow-[0_0_40px_var(--glow)]">
+    <div className="w-12 h-12 rounded-2xl border border-[var(--border)] bg-black/20 flex items-center justify-center">
       {icon}
     </div>
-
-    <div className="flex-1 min-w-0">
-      <h3 className="text-xl font-[900] italic uppercase tracking-tight text-[var(--text)]">
-        {title}
-      </h3>
-      <p className="mt-1 text-[11px] font-[900] uppercase tracking-[0.45em] text-[var(--text-muted)]">
-        {subtitle}
-      </p>
+    <div className="flex-1 text-left">
+      <h3 className="text-lg font-black italic uppercase tracking-tight">{title}</h3>
+      <p className="text-[8px] font-black uppercase tracking-[0.3em] text-[var(--text-muted)]">{subtitle}</p>
     </div>
-
-    <div className="w-10 h-10 rounded-full border border-[var(--border)] bg-[var(--glass)] flex items-center justify-center text-[var(--text-muted)] group-hover:text-[var(--text)] transition-colors">
-      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-500" />
-    </div>
+    <ArrowRight size={18} className="text-slate-600 group-hover:translate-x-1 transition-transform" />
   </button>
 );
 

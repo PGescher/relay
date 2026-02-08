@@ -8,7 +8,7 @@ import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
 
 import { EXERCISES } from './constants';
-import type { ExerciseLog, SetLog, WorkoutEvent, WorkoutSession, WorkoutTemplate } from '@relay/shared';
+import { WorkoutStatus, type ExerciseLog, type SetLog, type WorkoutEvent, type WorkoutSession, type WorkoutTemplate } from '@relay/shared';
 
 import { saveWorkoutDraft, clearWorkoutDraft, loadLastWorkoutDraft } from './workoutDraft';
 import { FinishWorkoutModal } from './FinishWorkoutModal';
@@ -550,7 +550,7 @@ const ActiveWorkout: React.FC = () => {
     if (currentWorkout) return;
 
     const draft = loadLastWorkoutDraft();
-    if (draft?.workout?.status === 'active') {
+    if (draft?.workout?.status === WorkoutStatus.active) {
       setCurrentWorkout(draft.workout);
       setEvents(draft.events ?? []);
       setRestByExerciseId(draft.restByExerciseId ?? {});
@@ -689,7 +689,7 @@ const ActiveWorkout: React.FC = () => {
 
   // --- Ghost lookup from latest completed workout per exerciseId ---
   const lastLogByExerciseId = useMemo(() => {
-    const completed = workoutHistory.filter((w) => w.status === 'completed');
+    const completed = workoutHistory.filter((w) => w.status === WorkoutStatus.completed);
     const map = new Map<string, ExerciseLog>();
     for (const w of completed) {
       for (const log of w.logs) {
@@ -796,7 +796,7 @@ const ActiveWorkout: React.FC = () => {
         weight: typeof s?.weight === 'number' ? s.weight : 0,
       }));
 
-      const hasSignal = completed.length > 0 || mapped.some((s) => (s.reps ?? 0) !== 0 || (s.weight ?? 0) !== 0);
+      const hasSignal = completed.length > 0 || mapped.some((s: { reps: any; weight: any; }) => (s.reps ?? 0) !== 0 || (s.weight ?? 0) !== 0);
       if (hasSignal) return mapped;
     }
 
@@ -1002,7 +1002,7 @@ const ActiveWorkout: React.FC = () => {
       ...currentWorkout,
       dataVersion: 1,
       endTime: now,
-      status: 'completed',
+      status: WorkoutStatus.completed,
       durationSec: Math.round((now - currentWorkout.startTime) / 1000),
       rpeOverall: opts.rpeOverall,
     };

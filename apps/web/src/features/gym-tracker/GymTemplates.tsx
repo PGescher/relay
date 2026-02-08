@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Play, Pencil, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import type { WorkoutSession, WorkoutTemplate } from '@relay/shared';
+import { WorkoutSession, WorkoutTemplate, WorkoutStatus } from '@relay/shared';
 
 import { useApp } from '../../context/AppContext';
 
@@ -66,7 +66,7 @@ const GymTemplates: React.FC<Props> = ({ onStartTemplate }) => {
       id: uid(),
       startTime: Date.now(),
       updatedAt: Date.now(),
-      status: 'active',
+      status: WorkoutStatus.active,
       module: 'GYM',
       templateIdUsed: t.id,
       logs: ex.map((e) => ({

@@ -104,7 +104,7 @@ model Workout {
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   module    WorkoutModule
-  status    String
+  status    WorkoutStatus @default(planned)
   startTime DateTime      @default(now())
   endTime   DateTime?
 
@@ -116,10 +116,8 @@ model Workout {
 
   events WorkoutEvent[]
 
-  // --- ADD THESE THREE LINES ---
   externalLinks WorkoutExternalLink[]
   sensorSamples WorkoutSensorSample[]
-  // -----------------------------
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -279,4 +277,11 @@ model WorkoutSensorSample {
   payload Json? // future: cadence, power, etc.
 
   @@index([workoutId, at])
+}
+
+enum WorkoutStatus {
+  planned
+  active
+  completed
+  cancelled
 }
