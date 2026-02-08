@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { X, CheckCircle2, Trash2, Save } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import type { WorkoutSession, WorkoutTemplate } from '@relay/shared';
 
 type IncompleteAction = 'delete' | 'markComplete';
@@ -42,8 +43,8 @@ export function FinishWorkoutModal(props: {
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-end justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[400] bg-black/60 backdrop-blur-sm flex items-end justify-center p-4 pointer-events-auto">
       <div className="w-full max-w-xl rounded-[40px] border border-white/10 bg-[var(--bg)] text-[var(--text)] shadow-[0_30px_90px_rgba(0,0,0,0.55)] overflow-hidden animate-in slide-in-from-bottom duration-300">
         <div className="p-6">
           <div className="flex items-start justify-between gap-4">
@@ -250,5 +251,5 @@ export function FinishWorkoutModal(props: {
         <div className="h-[2px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
       </div>
     </div>
-  );
+  , document.body);
 }

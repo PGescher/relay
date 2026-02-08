@@ -15,7 +15,7 @@ type Tab = (typeof TABS)[number];
 const uid = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
 const GymDashboard: React.FC = () => {
-  const { currentWorkout, setCurrentWorkout, workoutHistory, setWorkoutHistory } = useApp();
+  const { currentWorkout, setCurrentWorkout, workoutHistory, setWorkoutHistory, requestOverlayExpand } = useApp();
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('history');
 
@@ -71,10 +71,13 @@ const GymDashboard: React.FC = () => {
     };
 
     setCurrentWorkout(newWorkout);
-    navigate('/activities/gym/active');
+    //navigate('/activities/gym');
   };
 
-  const resumeWorkout = () => navigate('/activities/gym/active');
+  const resumeWorkout = () => {
+    requestOverlayExpand?.();
+    //navigate('/activities/gym/active');
+  };
 
   const tabs = useMemo(
     () => [

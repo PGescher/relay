@@ -1,4 +1,3 @@
-// apps/web/src/components/layout/AppShell.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, animate } from 'framer-motion';
@@ -10,6 +9,7 @@ import {
   User,
   LogOut,
   Sparkles,
+  LucideIcon,
   X,
   Settings,
   Hand,
@@ -22,7 +22,6 @@ import {
   UploadCloud,
   Footprints,
   TimerReset,
-  type LucideIcon,
 } from 'lucide-react';
 
 import ThemeToggle from '../ui/ThemeToggle';
@@ -30,6 +29,8 @@ import { DevDataSourceToggle } from '../ui/DevDataToggle';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
 import type { NavDock } from '../../context/AppContext';
+
+import { ActiveSessionOverlay } from '../layout/ActiveSessionOverlay';
 
 interface AppShellProps {
   onLogout: () => void;
@@ -118,77 +119,36 @@ const DOUBLE_TAP_WINDOW_MS = 650;
 const FAST_SPRING = { type: 'spring', stiffness: 900, damping: 48, mass: 0.55 } as const;
 const FAST_SPRING_SOFT = { type: 'spring', stiffness: 820, damping: 46, mass: 0.6 } as const;
 
-type Slot = { dx: number; dy: number };
+const MINIMIZE_EVENT = 'relay:overlay:minimize';
 
-const polar = (deg: number, r: number) => {
-  const rad = (deg * Math.PI) / 180;
-  return {
-    dx: Math.round(Math.cos(rad) * r),
-    dy: Math.round(Math.sin(rad) * r),
-  };
-};
-
-function makeSmallArcSlots(dock: NavDock): Slot[] {
-  //const r = 180;
-
-  if (dock === 'left') {
-    const r = 180;
-    const angles = [-5, -30, -55, -80, -105];
-    return angles.map((a) => polar(a, r));
-  }
-
-  if (dock === 'right') {
-    const r = 180;
-    const angles = [-190, -165, -140, -115, -90];
-    return angles.map((a) => polar(a, r));
-  }
-
-  // center dock: symmetric arc
-  const r = 150;
-  const angles = [-150, -120, -90, -60, -30];
-  return angles.map((a) => polar(a, r + 6));
+function requestOverlayMinimize() {
+  window.dispatchEvent(new CustomEvent(MINIMIZE_EVENT));
 }
-
-function makeMainSlots(dock: NavDock): Slot[] {
-  const p = (deg: number, r: number) => {
-    const rad = (deg * Math.PI) / 180;
-    return { dx: Math.round(Math.cos(rad) * r), dy: Math.round(Math.sin(rad) * r) };
-  };
-
-  if (dock === 'left') {
-    const r = 50;
-    const angles = [370, 320, -105];
-    return angles.map((a) => p(a, r));
-  }
-
-  if (dock === 'right') {
-    const r = 90;
-    const angles = [-200, -140, -80];
-    return angles.map((a) => p(a, r));
-  }
-
-  const r = 90;
-  const angles = [-200, 20, -90];
-  return angles.map((a) => p(a, r));
-}
-
-/**
- * CRITICAL: keep translate(-50%, -50%) even when Framer Motion writes transform.
- * This is the real fix for “menu shifted relative to hub”.
- */
-const centeredTransformTemplate = (_transform: any, generatedTransform: string) =>
-  `translate(-50%, -50%) ${generatedTransform}`;
 
 
 const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
-  const { currentWorkout, handMode, toggleHandMode, navDock, setNavDock, derivedNavDock } = useApp();
+  const {
+    currentWorkout,
+    activeOverlay,
+    handMode,
+    toggleHandMode,
+    navDock,
+    setNavDock,
+    derivedNavDock,
+    requestOverlayExpand, // <-- ADD (muss es im Context geben)
+  } = useApp() as any;
+
   const { user } = useAuth();
 
   const location = useLocation();
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
 
-  const isGymActive = location.pathname === '/activities/gym/active';
+  const navigateWithOverlayMinimize = (to: any, opts?: any) => {
+    requestOverlayMinimize();
+    navigate(to, opts);
+  };
+
 
   const [elapsed, setElapsed] = useState(0);
   const [showSideMenu, setShowSideMenu] = useState(false);
@@ -205,11 +165,17 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
   const showLiveBadge = hasLive;
 
   const currentIndex = useMemo(() => getCurrentTabIndex(location.pathname), [location.pathname]);
-  const swipeEnabled = currentIndex !== -1 && !showSideMenu && !flower.open;
+
+  // overlay state from AppContext session is handled inside ActiveSessionOverlay,
+  // but we can infer "expanded overlay" to disable swipe gestures and fade base.
+  const overlayExpanded = activeOverlay?.mode === 'expanded';
+
+  const swipeEnabled = currentIndex !== -1 && !showSideMenu && !flower.open && !overlayExpanded;
 
   const x = useMotionValue(0);
   const allowSwipeRef = useRef(true);
 
+  // workout timer (for live pill)
   useEffect(() => {
     if (!currentWorkout) {
       setElapsed(0);
@@ -221,12 +187,14 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
     return () => window.clearInterval(id);
   }, [currentWorkout]);
 
+  // close overlays on route change
   useEffect(() => {
     if (showSideMenu) setShowSideMenu(false);
-    if ((flower as any).open) setFlower({ open: false } as any);
+    if (flower.open) setFlower({ open: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  // side menu escape / outside click + body lock
   useEffect(() => {
     if (!showSideMenu) return;
 
@@ -259,13 +227,14 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
     };
   }, [showSideMenu]);
 
+  // flower escape / outside click
   useEffect(() => {
-    if (!(flower as any).open) return;
+    if (!flower.open) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setFlower({ open: false } as any);
+      if (e.key === 'Escape') setFlower({ open: false });
     };
-    const onMouseDown = () => setFlower({ open: false } as any);
+    const onMouseDown = () => setFlower({ open: false });
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('mousedown', onMouseDown);
@@ -274,27 +243,29 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('mousedown', onMouseDown);
     };
-  }, [(flower as any).open]);
+  }, [flower.open]);
 
+  // Smart back: tab-root first, then home (prevents loops)
   const goBackSmart = () => {
     const tabRoot = getCurrentTabRoot(location.pathname);
 
     if (tabRoot && location.pathname !== tabRoot) {
-      navigate(tabRoot, { replace: true });
+      navigateWithOverlayMinimize(tabRoot, { replace: true });
+
       return;
     }
 
     if (tabRoot && tabRoot !== '/home') {
-      navigate('/home', { replace: true });
+     navigateWithOverlayMinimize('/home', { replace: true });
       return;
     }
 
     if (window.history.length > 2) {
-      navigate(-1);
+      navigateWithOverlayMinimize(-1);
       return;
     }
 
-    navigate('/home', { replace: true });
+    navigateWithOverlayMinimize('/home', { replace: true });
   };
 
   const handleDragStart = (_: any, info: any) => {
@@ -319,8 +290,9 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
     const leftSwipe = info.offset.x < -offsetThreshold || info.velocity.x < -velocityThreshold;
     const rightSwipe = info.offset.x > offsetThreshold || info.velocity.x > velocityThreshold;
 
-    if (leftSwipe && currentIndex < TABS.length - 1) navigate(TABS[currentIndex + 1]);
-    if (rightSwipe && currentIndex > 0) navigate(TABS[currentIndex - 1]);
+    if (leftSwipe && currentIndex < TABS.length - 1) navigateWithOverlayMinimize(TABS[currentIndex + 1]);
+    if (rightSwipe && currentIndex > 0) navigateWithOverlayMinimize(TABS[currentIndex - 1]);
+
   };
 
   const openMenu = () => setShowSideMenu(true);
@@ -332,6 +304,7 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
   const menuPanelSide = handMode === 'left' ? 'left-0 border-r' : 'right-0 border-l';
   const menuPanelExitX = handMode === 'left' ? -340 : 340;
 
+  // Header: settings on chosen side, logo opposite
   const settingsOnLeft = handMode === 'left';
   const logoOnLeft = !settingsOnLeft;
 
@@ -343,20 +316,28 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
       level: 'modules',
       lastModuleTapKey: null,
       lastTapAt: 0,
-    } as any);
+    });
   };
 
   const flowerNavigate = (to: string) => {
-    setFlower({ open: false } as any);
-    navigate(to);
+    setFlower({ open: false });
+    navigateWithOverlayMinimize(to);
   };
 
+  const resumeWorkoutOverlay = () => {
+    // Flower schließen und Overlay maximieren
+    setFlower({ open: false });
+    requestOverlayExpand?.();
+  };
+
+
   const handleModulePetalTap = (moduleKey: 'gym' | 'running') => {
-    setFlower((prev: any) => {
+    setFlower((prev) => {
       if (!prev.open) return prev;
 
       const now = Date.now();
       const isDouble = prev.lastModuleTapKey === moduleKey && now - prev.lastTapAt <= DOUBLE_TAP_WINDOW_MS;
+
       const next = { ...prev, lastModuleTapKey: moduleKey, lastTapAt: now };
 
       if (moduleKey === 'gym') {
@@ -364,8 +345,8 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
 
         if (isDouble || prev.level === 'gym') {
           queueMicrotask(() => {
-            setFlower({ open: false } as any);
-            navigate('/activities/gym');
+            setFlower({ open: false });
+            navigateWithOverlayMinimize('/activities/gym');
           });
         }
         return next;
@@ -376,10 +357,9 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
   };
 
   const petals: Petal[] | null = useMemo(() => {
-    const f: any = flower;
-    if (!f.open) return null;
+    if (!flower.open) return null;
 
-    if (f.level === 'modules') {
+    if (flower.level === 'modules') {
       return [
         { key: 'gym', label: 'Gym', icon: Dumbbell, onClick: () => handleModulePetalTap('gym') },
         { key: 'soon1', label: 'Soon', icon: TimerReset, onClick: () => {}, disabled: true, tone: 'soon' },
@@ -388,12 +368,22 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
           label: hasLive ? 'Resume' : 'Close',
           icon: hasLive ? Play : X,
           onClick: () => {
-            if (hasLive) flowerNavigate('/activities/gym/active');
-            else setFlower({ open: false } as any);
+            if (!hasLive) {
+              setFlower({ open: false });
+              return;
+            }
+            resumeWorkoutOverlay();
           },
           tone: hasLive ? 'live' : 'default',
         },
-        { key: 'running', label: 'Running', icon: Footprints, onClick: () => handleModulePetalTap('running'), disabled: true, tone: 'soon' },
+        {
+          key: 'running',
+          label: 'Running',
+          icon: Footprints,
+          onClick: () => handleModulePetalTap('running'),
+          disabled: true,
+          tone: 'soon',
+        },
         { key: 'soon2', label: 'Soon', icon: FolderKanban, onClick: () => {}, disabled: true, tone: 'soon' },
       ];
     }
@@ -405,7 +395,7 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
       { key: 'analytics', label: 'Analytics', icon: BarChart3, onClick: () => flowerNavigate('/activities/gym/analytics') },
       { key: 'importexport', label: 'Import', icon: UploadCloud, onClick: () => flowerNavigate('/activities/gym/importexport') },
     ];
-  }, [flower, hasLive]);
+  }, [flower.open, (flower as any).level, hasLive]);
 
   const mainButtons: MainButton[] = useMemo(
     () => [
@@ -416,17 +406,17 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
     []
   );
 
-  const topBtnClass =
-    'p-2 rounded-2xl pointer-events-auto z-[125] bg-[var(--glass)] border border-[var(--border)] backdrop-blur-md shadow-lg shadow-black/10 hover:bg-[var(--glass-strong)] transition-colors';
-
   return (
     <div className="flex flex-col min-h-screen bg-[var(--bg)] text-[var(--text)] transition-colors overflow-x-hidden">
-      {/* TOP FLOATING CONTROLS */}
-      <header className="fixed top-0 left-0 right-0 z-[110] px-4 sm:px-6 pt-3 pointer-events-none">
-        <div className="relative max-w-xl mx-auto flex items-center h-12 pointer-events-auto">
+      {/* TOP BAR */}
+      <header
+        className={["fixed top-0 left-0 right-0 z-[120] bg-[var(--bg)]/80 backdrop-blur-md border-b border-[var(--border)] px-4 sm:px-6 h-16 transition-opacity", overlayExpanded ? "opacity-0 pointer-events-none" : ""].join(" ")}
+      >
+        <div className="relative h-full max-w-xl mx-auto flex items-center">
+          {/* LEFT SLOT */}
           <div className="flex items-center gap-2 min-w-[10rem]">
             {logoOnLeft && (
-              <Link to="/home" className={topBtnClass} aria-label="Home" title="Home">
+              <Link to="/home" onClick={requestOverlayMinimize} className="w-10 flex items-center justify-center" aria-label="Home" title="Home">
                 <div className="w-9 h-9 bg-[var(--primary)] rounded-xl flex items-center justify-center shadow-lg shadow-black/10">
                   <Sparkles className="text-white w-5 h-5" />
                 </div>
@@ -438,7 +428,7 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
                 ref={openMenuBtnRef}
                 type="button"
                 onClick={openMenu}
-                className={topBtnClass}
+                className="p-2 -ml-2 hover:bg-[var(--bg-card)] rounded-xl transition-colors"
                 aria-haspopup="dialog"
                 aria-expanded={showSideMenu}
                 aria-label="Open menu"
@@ -448,12 +438,18 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
             )}
 
             {!isHome && (
-              <button type="button" onClick={goBackSmart} className={topBtnClass} aria-label="Back" title="Back">
+              <button
+                type="button"
+                onClick={goBackSmart}
+                className="p-2 hover:bg-[var(--bg-card)] rounded-xl transition-colors"
+                aria-label="Back"
+              >
                 <ArrowLeft size={20} />
               </button>
             )}
           </div>
 
+          {/* CENTER SLOT (LIVE PILL) */}
           <div className="absolute left-1/2 -translate-x-1/2">
             <AnimatePresence>
               {showLivePill && (
@@ -465,12 +461,14 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
                   className="pointer-events-none"
                 >
                   <div className="pointer-events-auto max-w-[min(58vw,320px)]">
-                    <Link
-                      to="/activities/gym/active"
+                    <button
+                      type="button"
+                      onClick={() => requestOverlayExpand?.()}
                       className="inline-flex items-center gap-2 bg-blue-600 px-3 py-1.5 rounded-full shadow-lg shadow-blue-500/20 border border-white/10 whitespace-nowrap"
-                      aria-label="Go to live session"
-                      title="Go to live session"
+                      aria-label="Resume live session"
+                      title="Resume live session"
                     >
+                      
                       <motion.div
                         className="w-1.5 h-1.5 bg-white rounded-full"
                         animate={reduceMotion ? undefined : { opacity: [0.35, 1, 0.35] }}
@@ -479,16 +477,17 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
                       <span className="text-[10px] font-black text-white uppercase tracking-tighter overflow-hidden text-ellipsis">
                         LIVE {formatShortTime(elapsed)}
                       </span>
-                    </Link>
+                    </button>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
 
+          {/* RIGHT SLOT */}
           <div className="ml-auto flex items-center justify-end gap-2 min-w-[10rem]">
             {!logoOnLeft && (
-              <Link to="/home" className={topBtnClass} aria-label="Home" title="Home">
+              <Link to="/home" className="w-10 flex items-center justify-center" aria-label="Home" title="Home">
                 <div className="w-9 h-9 bg-[var(--primary)] rounded-xl flex items-center justify-center shadow-lg shadow-black/10">
                   <Sparkles className="text-white w-5 h-5" />
                 </div>
@@ -500,7 +499,7 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
                 ref={openMenuBtnRef}
                 type="button"
                 onClick={openMenu}
-                className={topBtnClass}
+                className="p-2 -mr-2 hover:bg-[var(--bg-card)] rounded-xl transition-colors"
                 aria-haspopup="dialog"
                 aria-expanded={showSideMenu}
                 aria-label="Open menu"
@@ -512,25 +511,30 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
         </div>
       </header>
 
-      {/* MAIN */}
+      {/* MAIN (fades + disables interaction while overlay expanded) */}
       <motion.main
         key={location.pathname}
-        drag={!isGymActive && swipeEnabled ? 'x' : false}
+        drag={swipeEnabled ? 'x' : false}
         dragConstraints={{ left: 0, right: 0 }}
         dragElastic={0.16}
         dragMomentum={false}
-        style={!isGymActive && swipeEnabled ? { x } : undefined}   // ✅ IMPORTANT
-        onDragStart={!isGymActive && swipeEnabled ? handleDragStart : undefined}
-        onDragEnd={!isGymActive && swipeEnabled ? handleSwipeEnd : undefined}
-        className="flex-1 w-full max-w-xl mx-auto touch-pan-y pt-16 pb-[calc(6.2rem+env(safe-area-inset-bottom))]"
+        style={{ x }}
+        onDragStart={handleDragStart}
+        onDragEnd={handleSwipeEnd}
+        className={[
+          'flex-1 w-full max-w-xl mx-auto touch-pan-y pt-16 pb-[calc(6.2rem+env(safe-area-inset-bottom))]',
+          overlayExpanded ? 'opacity-35 pointer-events-none select-none' : '',
+        ].join(' ')}
       >
         <Outlet />
       </motion.main>
 
+      {/* ACTIVE SESSION OVERLAY (expanded/minimized + pill + swipe minimize) */}
+      <ActiveSessionOverlay />
 
-      {/* FLOWER */}
+      {/* FLOWER (kept) */}
       <AnimatePresence>
-        {(flower as any).open && petals && (
+        {flower.open && petals && (
           <motion.div
             className="fixed inset-0 z-[240] select-none"
             style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
@@ -548,29 +552,30 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
             />
 
             <RadialMenuHierarchical
-              anchorRect={(flower as any).anchorRect}
+              anchorRect={flower.anchorRect}
               dock={derivedNavDock}
-              level={(flower as any).level}
+              level={flower.level}
               hasLive={hasLive}
               liveLabel={hasLive ? `Resume (${formatShortTime(elapsed)})` : undefined}
               onHubClick={() => {
-                setFlower((prev: any) => {
+                setFlower((prev) => {
                   if (!prev.open) return prev;
                   if (prev.level !== 'modules') return { ...prev, level: 'modules' };
-                  if (hasLive) queueMicrotask(() => navigate('/activities/gym/active'));
+                  if (hasLive) queueMicrotask(() => requestOverlayExpand?.());
                   return { open: false };
+
                 });
               }}
               mainButtons={mainButtons}
               petals={petals}
-              onClose={() => setFlower({ open: false } as any)}
+              onClose={() => setFlower({ open: false })}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* SINGLE HUB NAV */}
-      <div className="fixed bottom-0 left-0 right-0 pointer-events-none z-[60]">
+      <div className="fixed bottom-0 left-0 right-0 pointer-events-none z-[260]">
         <div className="max-w-xl mx-auto px-4 pb-[calc(0.9rem+env(safe-area-inset-bottom))] relative">
           <HubButton
             dock={derivedNavDock}
@@ -578,8 +583,8 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
             hasLive={hasLive}
             onPress={(el) => openFlowerFrom(el)}
             onDoubleAction={() => {
-              if (hasLive) navigate('/activities/gym/active');
-              else navigate('/home');
+              if (hasLive) navigateWithOverlayMinimize('/activities/gym/active');
+              else navigateWithOverlayMinimize('/home');
             }}
           />
         </div>
@@ -716,9 +721,11 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
                       className={`
                         rounded-2xl border border-[var(--border)]
                         px-3 py-2 text-[11px] font-black uppercase tracking-tighter transition-colors
-                        ${navDock !== 'center' && handMode === 'left'
-                          ? 'bg-[var(--primary)] text-white'
-                          : 'bg-[var(--bg)] hover:bg-[var(--bg-card)]'}
+                        ${
+                          navDock !== 'center' && handMode === 'left'
+                            ? 'bg-[var(--primary)] text-white'
+                            : 'bg-[var(--bg)] hover:bg-[var(--bg-card)]'
+                        }
                       `}
                     >
                       Left
@@ -745,9 +752,11 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
                       className={`
                         rounded-2xl border border-[var(--border)]
                         px-3 py-2 text-[11px] font-black uppercase tracking-tighter transition-colors
-                        ${navDock !== 'center' && handMode === 'right'
-                          ? 'bg-[var(--primary)] text-white'
-                          : 'bg-[var(--bg)] hover:bg-[var(--bg-card)]'}
+                        ${
+                          navDock !== 'center' && handMode === 'right'
+                            ? 'bg-[var(--primary)] text-white'
+                            : 'bg-[var(--bg)] hover:bg-[var(--bg-card)]'
+                        }
                       `}
                     >
                       Right
@@ -785,6 +794,67 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
   );
 };
 
+type Slot = { dx: number; dy: number };
+
+const polar = (deg: number, r: number) => {
+  const rad = (deg * Math.PI) / 180;
+  return {
+    dx: Math.round(Math.cos(rad) * r),
+    dy: Math.round(Math.sin(rad) * r),
+  };
+};
+
+function makeSmallArcSlots(dock: NavDock): Slot[] {
+  const r = 120;
+
+  if (dock === 'left') {
+    const r = 150;
+    const angles = [-5, -30, -55, -80, -105];
+    return angles.map((a) => polar(a, r));
+  }
+
+  if (dock === 'right') {
+    const r = 150;
+    const angles = [-200, -170, -140, -110, -80];
+    return angles.map((a) => polar(a, r));
+  }
+  // center dock: force perfect symmetry around dx=0
+  // (no rounding drift / avg-shift artifacts)
+  const NUDGE_X = 3; // -2 oder -3 wenn du es minimal nach links willst
+  const angles = [-160, -125, -90, -55, -20];
+  return angles.map((a) => {
+    const s = polar(a, r + 6);
+    return { ...s, dx: s.dx + NUDGE_X };
+  });
+}
+
+function makeMainSlots(dock: NavDock): Slot[] {
+  const polar2 = (deg: number, r: number) => {
+    const rad = (deg * Math.PI) / 180;
+    return { dx: Math.round(Math.cos(rad) * r), dy: Math.round(Math.sin(rad) * r) };
+  };
+
+  if (dock === 'left') {
+    const r = 50;
+    const angles = [370, 320, -105];
+    return angles.map((a) => polar2(a, r));
+  }
+
+  if (dock === 'right') {
+    const r = 80;
+    const angles = [-200, -140, -75];
+    return angles.map((a) => polar2(a, r));
+  }
+
+  const r = 75;
+  const angles = [-200, 20, -90];
+  const NUDGE_X = 0; // -2 oder -3 wenn du es minimal nach links willst
+  return angles.map((a) => {
+    const s = polar(a, r + 6);
+    return { ...s, dx: s.dx + NUDGE_X };
+  });
+}
+
 function RadialMenuHierarchical({
   anchorRect,
   dock,
@@ -814,16 +884,15 @@ function RadialMenuHierarchical({
   const anchorX = anchorRect.left + anchorRect.width / 2;
   const anchorY = anchorRect.top + anchorRect.height / 2;
 
-  // cluster radius for clamping
   const SMALL_R = 92;
   const MAIN_R = 55;
   const HUB_HALF = 36;
   const BTN_HALF = 33;
   const PETAL_HALF = 28;
+
   const CLUSTER_R = Math.max(SMALL_R + PETAL_HALF, MAIN_R + BTN_HALF, HUB_HALF) + 12;
 
-  // IMPORTANT: container is centered at anchor via translate(-50%, -50%)
-  const fx = Math.max(CLUSTER_R, Math.min(vw - CLUSTER_R, anchorX));
+  const fx = Math.max(CLUSTER_R, Math.min(vw - CLUSTER_R, anchorX - BTN_HALF));
   const fy = Math.max(110, Math.min(vh - 120, anchorY - 125));
 
   const mainSlots = makeMainSlots(dock);
@@ -834,10 +903,15 @@ function RadialMenuHierarchical({
   const hubLabel = hubIsBack ? 'Back' : hasLive ? (liveLabel ?? 'Resume') : 'Close';
 
   return (
-    <div className="absolute inset-0" onMouseDown={onClose} onTouchStart={onClose}>
+    <div
+      className="absolute inset-0"
+      onMouseDown={onClose}
+      onTouchStart={onClose}
+      style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
+    >
       <motion.div
         className="absolute will-change-transform"
-        style={{ left: fx, top: fy, transform: 'translate(-50%, -50%)' }}
+        style={{ left: fx, top: fy }}
         initial={reduceMotion ? false : { scale: 0.96, opacity: 0 }}
         animate={reduceMotion ? undefined : { scale: 1, opacity: 1 }}
         exit={reduceMotion ? undefined : { scale: 0.96, opacity: 0 }}
@@ -851,18 +925,17 @@ function RadialMenuHierarchical({
           e.preventDefault();
         }}
       >
-        {/* HUB (centered via transformTemplate) */}
+        {/* HUB */}
         <motion.button
           type="button"
           onClick={onHubClick}
-          className="absolute h-16 w-16 rounded-[24px] border border-[var(--border)] bg-[var(--bg)]/84 backdrop-blur-2xl shadow-2xl flex items-center justify-center will-change-transform"
+          className="absolute -translate-x-1/2 -translate-y-1/2 h-16 w-16 rounded-[24px] border border-[var(--border)] bg-[var(--bg)]/84 backdrop-blur-2xl shadow-2xl flex items-center justify-center will-change-transform"
           aria-label={hubLabel}
           title={hubLabel}
           style={{ left: 0, top: 0 }}
-          transformTemplate={centeredTransformTemplate}
-          initial={reduceMotion ? false : { x: 0, y: 0, scale: 0.9, opacity: 0 }}
-          animate={reduceMotion ? undefined : { x: 0, y: 0, scale: 1, opacity: 1 }}
-          exit={reduceMotion ? undefined : { x: 0, y: 0, scale: 0.9, opacity: 0 }}
+          initial={reduceMotion ? false : { scale: 0.9, opacity: 0 }}
+          animate={reduceMotion ? undefined : { scale: 1, opacity: 1 }}
+          exit={reduceMotion ? undefined : { scale: 0.9, opacity: 0 }}
           transition={FAST_SPRING}
         >
           {hasLive && !reduceMotion && (
@@ -878,7 +951,7 @@ function RadialMenuHierarchical({
           })}
         </motion.button>
 
-        {/* MAIN BUTTONS */}
+        {/* MAIN */}
         {mainSlots.map((pos, idx) => {
           const it = mainButtons[idx];
           if (!it) return null;
@@ -894,7 +967,7 @@ function RadialMenuHierarchical({
               aria-label={it.label}
               title={it.label}
               className={`
-                absolute
+                absolute -translate-x-1/2 -translate-y-1/2
                 h-[66px] w-[66px] rounded-[26px]
                 border border-[var(--border)]
                 bg-[var(--bg)]/90 backdrop-blur-2xl
@@ -904,8 +977,7 @@ function RadialMenuHierarchical({
                 ${disabled ? 'opacity-45 cursor-not-allowed' : 'hover:bg-[var(--bg-card)]'}
               `}
               style={{ left: 0, top: 0 }}
-              transformTemplate={centeredTransformTemplate}
-              initial={reduceMotion ? false : { x: pos.dx * 0.5, y: pos.dy * 0.5, opacity: 0, scale: 0.78 }}
+              initial={reduceMotion ? false : { x: 0, y: 0, opacity: 0, scale: 0.78 }}
               animate={reduceMotion ? undefined : { x: pos.dx, y: pos.dy, opacity: 1, scale: 1 }}
               exit={reduceMotion ? undefined : { opacity: 0, scale: 0.9 }}
               transition={
@@ -925,7 +997,6 @@ function RadialMenuHierarchical({
                   transition={{ duration: 1.25, repeat: Infinity, ease: 'easeInOut' }}
                 />
               )}
-
               <div className="relative h-full w-full flex flex-col items-center justify-center leading-none">
                 <it.icon
                   size={22}
@@ -937,15 +1008,13 @@ function RadialMenuHierarchical({
                         : 'text-[var(--text)]'
                   }
                 />
-                <div className="mt-1 text-[9px] font-black uppercase tracking-tighter text-[var(--text-muted)]">
-                  {it.label}
-                </div>
+                <div className="mt-1 text-[9px] font-black uppercase tracking-tighter text-[var(--text-muted)]">{it.label}</div>
               </div>
             </motion.button>
           );
         })}
 
-        {/* SMALL PETALS */}
+        {/* SMALL */}
         {smallSlots.map((pos, idx) => {
           const it = petals[idx];
           if (!it) return null;
@@ -961,7 +1030,7 @@ function RadialMenuHierarchical({
               aria-label={it.label}
               title={it.label}
               className={`
-                absolute
+                absolute -translate-x-1/2 -translate-y-1/2
                 h-14 w-14 rounded-[22px]
                 border border-[var(--border)]
                 bg-[var(--bg)]/86 backdrop-blur-2xl
@@ -971,8 +1040,7 @@ function RadialMenuHierarchical({
                 ${disabled ? 'opacity-45 cursor-not-allowed' : 'hover:bg-[var(--bg-card)]'}
               `}
               style={{ left: 0, top: 0 }}
-              transformTemplate={centeredTransformTemplate}
-              initial={reduceMotion ? false : { x: pos.dx * 0.55, y: pos.dy * 0.55, opacity: 0, scale: 0.75 }}
+              initial={reduceMotion ? false : { x: 0, y: 0, opacity: 0, scale: 0.75 }}
               animate={reduceMotion ? undefined : { x: pos.dx, y: pos.dy, opacity: 1, scale: 1 }}
               exit={reduceMotion ? undefined : { opacity: 0, scale: 0.9 }}
               transition={
@@ -992,7 +1060,6 @@ function RadialMenuHierarchical({
                   transition={{ duration: 1.25, repeat: Infinity, ease: 'easeInOut' }}
                 />
               )}
-
               <div className="relative h-full w-full flex flex-col items-center justify-center leading-none">
                 <it.icon
                   size={20}
@@ -1025,6 +1092,7 @@ const HubButton: React.FC<{
 }> = ({ dock, live, hasLive, onPress, onDoubleAction }) => {
   const reduceMotion = useReducedMotion();
   const ref = useRef<HTMLButtonElement | null>(null);
+  const hubVisualRef = useRef<HTMLDivElement | null>(null);
 
   const EDGE_INSET_PX = 20;
   const justifyClass = dock === 'left' ? 'justify-start' : dock === 'right' ? 'justify-end' : 'justify-center';
@@ -1040,7 +1108,10 @@ const HubButton: React.FC<{
       <button
         ref={ref}
         type="button"
-        onClick={() => ref.current && onPress(ref.current)}
+        onClick={() => {
+          const el = hubVisualRef.current ?? ref.current;
+          if (el) onPress(el as any);
+        }}
         onDoubleClick={onDoubleAction}
         className="relative select-none"
         style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', touchAction: 'manipulation' }}
@@ -1049,6 +1120,7 @@ const HubButton: React.FC<{
       >
         <div className={`absolute inset-0 rounded-[30px] blur-2xl bg-[var(--primary)] ${live ? 'opacity-35' : 'opacity-20'}`} />
         <div
+          ref={hubVisualRef}
           className="
             relative h-[72px] w-[72px]
             rounded-[30px]
@@ -1059,7 +1131,9 @@ const HubButton: React.FC<{
           "
         >
           <Activity size={30} strokeWidth={3} className={live ? 'text-blue-200' : 'text-[var(--text)]'} />
-          {live && <div className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_16px_rgba(59,130,246,0.85)]" />}
+          {live && (
+            <div className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_16px_rgba(59,130,246,0.85)]" />
+          )}
 
           {live && !reduceMotion && (
             <motion.div

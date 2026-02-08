@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 
 import { requireAuth, type AuthedRequest } from './authMiddleware.js';
-import { WorkoutModule } from '@prisma/client';
+import { WorkoutModule, WorkoutStatus } from '@prisma/client';
 
 
 const router = express.Router();
@@ -75,7 +75,7 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
         update: {
           userId: req.userId!,
           module: workout.module, // must match enum strings now ('GYM')
-          status: 'COMPLETED',
+          status: WorkoutStatus.completed,
           startTime: new Date(workout.startTime),
           endTime: new Date(workout.endTime),
           deletedAt: null,
@@ -89,7 +89,7 @@ router.post('/gym/complete', requireAuth, async (req: AuthedRequest, res) => {
           id: workout.id,
           userId: req.userId!,
           module: workout.module,
-          status: 'COMPLETED',
+          status: WorkoutStatus.completed,
           startTime: new Date(workout.startTime),
           endTime: new Date(workout.endTime),
           data: {

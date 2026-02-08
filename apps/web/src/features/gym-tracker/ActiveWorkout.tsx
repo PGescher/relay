@@ -1,8 +1,15 @@
-// apps/web/src/modules/gym/ActiveWorkout.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  forwardRef,
+  useImperativeHandle,
+  useCallback,
+} from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Check, X, Timer, Trash2, ListOrdered, ChevronUp, ChevronDown } from 'lucide-react';
-import { AnimatePresence, Reorder, motion } from 'framer-motion';
+import { Plus, Check, X, Timer, Trash2, ListOrdered, ChevronUp, ChevronDown, MinusSquare } from 'lucide-react';
+import { AnimatePresence, Reorder, motion, useReducedMotion } from 'framer-motion';
 
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
@@ -26,11 +33,7 @@ import { enqueuePending } from '../../data/sync/pendingQueue';
 import { upsertWorkouts } from '../../data/workoutCache';
 import { syncNow } from '../../data/sync/syncManager';
 
-// ---------------------------
-// Helpers
-// ---------------------------
 const REST_STORAGE_KEY = 'relay:gym:restByExerciseId:v1';
-
 const uid = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function arrayMove<T>(arr: T[], from: number, to: number): T[] {
@@ -74,499 +77,39 @@ function ensureLogIds(logs: ExerciseLog[]): ExerciseLogWithId[] {
   });
 }
 
-// ---------------------------
-// ExerciseCard
-// ---------------------------
-type ExerciseCardProps = {
-  log: ExerciseLogWithId;
-  exIndex: number;
+type OverlayMode = 'expanded' | 'minimized';
 
-  deleteExercise: (exerciseIndex: number) => void;
+export type ActiveWorkoutOverlayHandle = {
+  cancelWorkout: () => void;
+  openFinish: () => void;
 
-  addSet: (exerciseIndex: number) => void;
-  deleteSetConfirmed: (exerciseIndex: number, setIndex: number) => void;
-
-  updateSet: (exerciseIndex: number, setIndex: number, data: Partial<SetLog>) => void;
-  toggleComplete: (exerciseIndex: number, setIndex: number) => void;
-
-  getRestForExercise: (exerciseId: string) => number;
-  setRestConfigForExerciseId: React.Dispatch<React.SetStateAction<string | null>>;
-
-  formatGhost: (exerciseId: string, setIndex: number) => string;
-  getGhost: (exerciseId: string, setIndex: number) => { weight?: number; reps?: number };
-
-  swipeRef: React.MutableRefObject<Record<string, SwipeState>>;
-
-  // rest + anchor
-  restRunning: boolean;
-  restRemaining: number;
-  restTotal: number;
-  restAnchor: { logId: string; setId: string } | null;
-
-  // rest controls
-  stopRest: () => void;
-  addRest: (delta: number) => void;
+  // scroll preservation
+  getScrollTop: () => number;
+  setScrollTop: (top: number) => void;
 };
 
-const ExerciseCard: React.FC<ExerciseCardProps> = (props) => {
-  const {
-    log,
-    exIndex,
-    deleteExercise,
-    addSet,
-    deleteSetConfirmed,
-    updateSet,
-    toggleComplete,
-    getRestForExercise,
-    setRestConfigForExerciseId,
-    formatGhost,
-    getGhost,
-    swipeRef,
-    restRunning,
-    restRemaining,
-    restTotal,
-    restAnchor,
-    stopRest,
-    addRest,
-  } = props;
 
-  const restForThis = getRestForExercise(log.exerciseId);
+export const ActiveWorkoutOverlay = forwardRef<
+  ActiveWorkoutOverlayHandle,
+  { mode: OverlayMode; onRequestMinimize: () => void }
+>(function ActiveWorkoutOverlay({ mode, onRequestMinimize }, ref) {
+  const reduceMotion = useReducedMotion();
 
-  const [armedDeleteKey, setArmedDeleteKey] = useState<string | null>(null);
-  const armTimerRef = useRef<number | null>(null);
-
-  const disarm = () => {
-    setArmedDeleteKey(null);
-    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
-    armTimerRef.current = null;
-  };
-
-  useEffect(() => {
-    return () => {
-      if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
-    };
-  }, []);
-
-  const armDelete = (key: string) => {
-    setArmedDeleteKey(key);
-    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
-    armTimerRef.current = window.setTimeout(() => {
-      setArmedDeleteKey((cur) => (cur === key ? null : cur));
-      armTimerRef.current = null;
-    }, 1200);
-  };
-
-  const isAnchoredExercise = restRunning && restAnchor?.logId === log.logId;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.985 }}
-      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-      className="
-        w-full
-        rounded-2xl
-        border border-[var(--border)]
-        bg-[var(--bg-card)]/35
-        backdrop-blur-md
-        px-3 py-3
-        overflow-hidden
-      "
-      onPointerDown={() => {
-        if (armedDeleteKey) disarm();
-      }}
-    >
-      {/* Header row */}
-      <div className="flex items-center gap-2 mb-2">
-        <h3 className="flex-1 min-w-0 font-black italic text-[15px] truncate">{log.exerciseName}</h3>
-
-        <button
-          type="button"
-          data-no-drag
-          onClick={(e) => {
-            e.stopPropagation();
-            setRestConfigForExerciseId(log.exerciseId);
-          }}
-          className="
-            flex items-center gap-1
-            h-8 px-2
-            rounded-xl
-            border border-[var(--border)]
-            bg-[var(--bg)]/55
-            text-[var(--text-muted)]
-            hover:text-[var(--primary)]
-            hover:border-[var(--primary)]
-            transition-colors
-            shrink-0
-          "
-          aria-label="Rest"
-          title="Rest"
-        >
-          <Timer size={15} />
-          <span className="text-[11px] font-black tabular-nums">{formatMMSS(restForThis)}</span>
-        </button>
-
-        <button
-          type="button"
-          data-no-drag
-          onClick={(e) => {
-            e.stopPropagation();
-            deleteExercise(exIndex);
-          }}
-          className="
-            h-8 w-8
-            rounded-xl
-            border border-[var(--border)]
-            bg-[var(--bg)]/55
-            flex items-center justify-center
-            text-[var(--text-muted)]
-            hover:text-red-500 hover:border-red-500
-            transition-colors
-            shrink-0
-          "
-          aria-label="Delete exercise"
-          title="Delete exercise"
-        >
-          <Trash2 size={15} />
-        </button>
-      </div>
-
-      {/* Columns header (tighter + smaller) */}
-      <div className="grid grid-cols-7 gap-2 px-1 pb-1 text-[9px] font-black uppercase text-[var(--text-muted)] opacity-80">
-        <span>Set</span>
-        <span className="col-span-2">Prev</span>
-        <span className="text-center">Kg</span>
-        <span className="text-center">Reps</span>
-        <span className="text-center">✓</span>
-        <span className="text-center">Del</span>
-      </div>
-
-      <div className="space-y-1.5">
-        {log.sets.map((set, setIndex) => {
-          const completed = !!set.isCompleted;
-          const ghostLabel = formatGhost(log.exerciseId, setIndex);
-          const g = getGhost(log.exerciseId, setIndex);
-          const key = set.id;
-
-          const isAnchoredSet = restRunning && restAnchor?.logId === log.logId && restAnchor?.setId === set.id;
-          const isArmed = armedDeleteKey === key;
-
-          const onTouchStart: React.TouchEventHandler<HTMLDivElement> = (e) => {
-            const t = e.touches[0];
-            swipeRef.current[key] = { startX: t.clientX, startY: t.clientY, swiping: false, triggered: false };
-          };
-
-          const onTouchMove: React.TouchEventHandler<HTMLDivElement> = (e) => {
-            const st = swipeRef.current[key];
-            if (!st) return;
-            const t = e.touches[0];
-            const dx = t.clientX - st.startX;
-            const dy = t.clientY - st.startY;
-
-            if (!st.swiping) {
-              if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) st.swiping = true;
-            }
-            if (st.swiping && !st.triggered && dx < -SWIPE_DELETE_PX) {
-              st.triggered = true;
-              deleteSetConfirmed(exIndex, setIndex);
-              disarm();
-            }
-          };
-
-          const onTouchEnd: React.TouchEventHandler<HTMLDivElement> = () => {
-            delete swipeRef.current[key];
-          };
-
-          return (
-            <div
-              key={set.id}
-              onTouchStart={onTouchStart}
-              onTouchMove={onTouchMove}
-              onTouchEnd={onTouchEnd}
-              className={[
-                'grid grid-cols-7 gap-2 items-center px-1 py-1.5 rounded-xl transition-colors',
-                completed ? 'bg-[var(--primary-soft)]/70' : 'bg-transparent',
-              ].join(' ')}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <span className="font-black text-[12px]">{setIndex + 1}</span>
-
-              <span className="col-span-2 text-[9px] font-black uppercase tracking-wider text-[var(--text-muted)] truncate opacity-80">
-                {ghostLabel || '—'}
-              </span>
-
-              <input
-                data-no-drag
-                inputMode="decimal"
-                value={set.weight === 0 ? '' : String(set.weight)}
-                placeholder={g.weight != null ? String(g.weight) : '0'}
-                onChange={(e) => {
-                  const raw = e.target.value.replace(',', '.');
-                  const cleaned = raw.replace(/[^0-9.]/g, '');
-                  const num = cleaned === '' ? 0 : Number(cleaned);
-                  updateSet(exIndex, setIndex, { weight: Number.isFinite(num) ? num : 0 });
-                }}
-                className="
-                  rounded-lg
-                  px-2 py-1.5
-                  text-[12px] font-black text-center
-                  w-full
-                  bg-[var(--bg)]/55
-                  border border-[var(--border)]
-                  text-[var(--text)]
-                  placeholder:text-[var(--text-muted)]
-                  focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]
-                "
-              />
-
-              <input
-                data-no-drag
-                inputMode="numeric"
-                value={set.reps === 0 ? '' : String(set.reps)}
-                placeholder={g.reps != null ? String(g.reps) : '0'}
-                onChange={(e) => {
-                  const cleaned = e.target.value.replace(/[^0-9]/g, '');
-                  const num = cleaned === '' ? 0 : parseInt(cleaned, 10);
-                  updateSet(exIndex, setIndex, { reps: Number.isFinite(num) ? num : 0 });
-                }}
-                className="
-                  rounded-lg
-                  px-2 py-1.5
-                  text-[12px] font-black text-center
-                  w-full
-                  bg-[var(--bg)]/55
-                  border border-[var(--border)]
-                  text-[var(--text)]
-                  placeholder:text-[var(--text-muted)]
-                  focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]
-                "
-              />
-
-              <div className="relative flex justify-center">
-                <button
-                  data-no-drag
-                  type="button"
-                  onClick={() => toggleComplete(exIndex, setIndex)}
-                  className={[
-                    'relative flex justify-center items-center h-9 w-9 rounded-xl transition-all border',
-                    completed
-                      ? 'bg-[var(--primary)] text-white border-white/10'
-                      : 'bg-[var(--bg)]/55 text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--primary)] hover:border-[var(--primary)]',
-                  ].join(' ')}
-                  aria-label="Toggle set completed"
-                >
-                  <Check size={16} />
-                  {isAnchoredSet && (
-                    <span className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full bg-[var(--primary)] text-white text-[10px] font-black shadow tabular-nums">
-                      {formatMMSS(restRemaining)}
-                    </span>
-                  )}
-                </button>
-              </div>
-
-              <button
-                data-no-drag
-                type="button"
-                onClick={() => {
-                  if (isArmed) {
-                    deleteSetConfirmed(exIndex, setIndex);
-                    disarm();
-                    return;
-                  }
-                  armDelete(key);
-                }}
-                className={[
-                  'flex justify-center items-center h-9 w-9 mx-auto rounded-xl transition-all border',
-                  isArmed
-                    ? 'bg-red-500/15 text-red-500 border-red-500'
-                    : 'bg-[var(--bg)]/55 text-[var(--text-muted)] border-[var(--border)] hover:text-red-500 hover:border-red-500',
-                ].join(' ')}
-                aria-label={isArmed ? 'Tap again to confirm delete' : 'Delete set'}
-                title={isArmed ? 'Tap again to confirm' : 'Delete'}
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Anchored rest row (kept, but slimmer) */}
-      {isAnchoredExercise && (
-        <div className="mt-2 rounded-2xl border border-[var(--border)] bg-[var(--bg)]/55 overflow-hidden">
-          <div className="px-3 py-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Timer size={15} className="text-[var(--primary)]" />
-              <span className="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Rest</span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                data-no-drag
-                type="button"
-                onClick={() => addRest(-30)}
-                className="px-2 py-1.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
-              >
-                -30
-              </button>
-
-              <span className="text-lg font-black italic text-[var(--primary)] tabular-nums min-w-[58px] text-center">
-                {formatMMSS(restRemaining)}
-              </span>
-
-              <button
-                data-no-drag
-                type="button"
-                onClick={() => addRest(+30)}
-                className="px-2 py-1.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
-              >
-                +30
-              </button>
-
-              <button
-                data-no-drag
-                type="button"
-                onClick={stopRest}
-                className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-red-500 hover:border-red-500 transition-colors"
-                aria-label="Cancel rest"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          </div>
-
-          <div className="h-1.5 bg-[var(--bg)] border-t border-[var(--border)]">
-            <div className="h-full bg-[var(--primary)]" style={{ width: `${restTotal > 0 ? (restRemaining / restTotal) * 100 : 0}%` }} />
-          </div>
-        </div>
-      )}
-
-      {/* Add set (slim) */}
-      <button
-        data-no-drag
-        type="button"
-        onClick={() => addSet(exIndex)}
-        className="
-          w-full mt-2
-          border border-dashed border-[var(--border)]
-          px-3 py-2
-          rounded-xl
-          text-[var(--text-muted)]
-          font-black text-[10px] uppercase tracking-widest
-          hover:border-[var(--primary)]
-          hover:text-[var(--primary)]
-          transition-colors
-        "
-      >
-        + Add set
-      </button>
-    </motion.div>
-  );
-};
-
-// ---------------------------
-// Reorder Overview Row
-// ---------------------------
-type OverviewRowProps = {
-  id: string;
-  log: ExerciseLogWithId;
-  pos: number;
-  count: number;
-
-  onDeleteAtLogIndex: (logIndex: number) => void;
-  logIndex: number;
-
-  onMovePos: (fromPos: number, toPos: number) => void;
-};
-
-const OverviewRow: React.FC<OverviewRowProps> = ({ id, log, pos, count, onDeleteAtLogIndex, logIndex, onMovePos }) => {
-  const done = log.sets.filter((s) => s.isCompleted).length;
-  const total = log.sets.length;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-
-  return (
-    <Reorder.Item
-      value={id}
-      whileDrag={{ scale: 1.01, zIndex: 999, boxShadow: '0 22px 60px rgba(0,0,0,0.35)' }}
-      transition={{ type: 'spring', stiffness: 380, damping: 34 }}
-      className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden touch-none"
-      style={{ touchAction: 'none' }}
-    >
-      <div className="flex items-center gap-3 px-3 h-14">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
-              {pos + 1}/{count}
-            </span>
-            <h3 className="font-black italic text-xs truncate">{log.exerciseName}</h3>
-          </div>
-
-          <div className="mt-1 flex items-center gap-2">
-            <span className="text-[10px] font-black text-[var(--text-muted)]">
-              {done}/{total}
-            </span>
-            <div className="h-1.5 flex-1 bg-[var(--bg)] rounded-full overflow-hidden border border-[var(--border)]">
-              <div className="h-full bg-[var(--primary)]" style={{ width: `${pct}%` }} />
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          data-no-drag
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => onMovePos(pos, pos - 1)}
-          disabled={pos === 0}
-          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
-          aria-label="Move up"
-        >
-          <ChevronUp size={16} />
-        </button>
-
-        <button
-          type="button"
-          data-no-drag
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => onMovePos(pos, pos + 1)}
-          disabled={pos === count - 1}
-          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
-          aria-label="Move down"
-        >
-          <ChevronDown size={16} />
-        </button>
-
-        <button
-          type="button"
-          data-no-drag
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => onDeleteAtLogIndex(logIndex)}
-          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-red-500 hover:border-red-500 transition-colors"
-          aria-label="Delete exercise"
-        >
-          <Trash2 size={16} />
-        </button>
-      </div>
-    </Reorder.Item>
-  );
-};
-
-// ---------------------------
-// Main Component
-// ---------------------------
-const ActiveWorkout: React.FC = () => {
   const app = useApp() as any;
   const { currentWorkout, setCurrentWorkout, setWorkoutHistory, workoutHistory } = app;
   const navigate = useNavigate();
   const { user, token } = useAuth();
 
-  const handMode = (app?.handMode as 'left' | 'right' | undefined) ?? ((localStorage.getItem('relay:handMode') as any) || 'right');
+  const handMode =
+    (app?.handMode as 'left' | 'right' | undefined) ?? ((localStorage.getItem('relay:handMode') as any) || 'right');
 
   const [timer, setTimer] = useState(0);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
 
   const [showReorderTab, setShowReorderTab] = useState(false);
   const reorderScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const [events, setEvents] = useState<WorkoutEvent[]>([]);
   const appendEvent = (type: WorkoutEvent['type'], payload?: WorkoutEvent['payload']) => {
@@ -643,7 +186,6 @@ const ActiveWorkout: React.FC = () => {
     const ids = withIds.map((l) => l.logId);
     setOrder((prev) => {
       if (!prev.length) return ids;
-
       const prevSet = new Set(prev);
       const kept = prev.filter((id) => ids.includes(id));
       const merged = [...kept];
@@ -701,7 +243,7 @@ const ActiveWorkout: React.FC = () => {
     appendEvent('rest_started', { plannedSec: seconds });
   };
 
-  const stopRest = () => {
+  const stopRest = useCallback(() => {
     setRestRunning(false);
     setRestRemaining(0);
     setRestTotal(0);
@@ -716,7 +258,7 @@ const ActiveWorkout: React.FC = () => {
       appendEvent('rest_stopped', { actualSec });
     }
     restStartedAtRef.current = null;
-  };
+  }, []);
 
   const addRest = (delta: number) => {
     if (!restRunning) return;
@@ -983,7 +525,7 @@ const ActiveWorkout: React.FC = () => {
     }
   };
 
-  const openFinish = () => {
+  const openFinish = useCallback(() => {
     if (!currentWorkout) return;
     stopRest();
     setShowFinish(true);
@@ -991,8 +533,56 @@ const ActiveWorkout: React.FC = () => {
     let n = 0;
     for (const log of currentWorkout.logs) for (const s of log.sets) if (!s.isCompleted) n++;
     setIncompleteCount(n);
-  };
+  }, [currentWorkout, stopRest]);
 
+  const cancelWorkout = useCallback(() => {
+    if (!currentWorkout) return;
+    stopRest();
+
+    if (confirm('Cancel workout? Data will be lost.')) {
+      appendEvent('workout_cancelled', {});
+      clearWorkoutDraft(currentWorkout.id);
+      setCurrentWorkout(null);
+      navigate('/activities/gym', { replace: true });
+    }
+  }, [currentWorkout, stopRest, navigate]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      cancelWorkout,
+      openFinish,
+      getScrollTop: () => scrollRef.current?.scrollTop ?? 0,
+      setScrollTop: (top: number) => {
+        if (!scrollRef.current) return;
+        scrollRef.current.scrollTop = top;
+      },
+    }),
+    [cancelWorkout, openFinish]
+  );
+
+  useEffect(() => {
+    if (!currentWorkout) return;
+
+    const t = window.setTimeout(() => {
+      saveWorkoutDraft({
+        workout: currentWorkout,
+        events,
+        restByExerciseId,
+        updatedAt: Date.now(),
+      });
+    }, 150);
+
+    return () => window.clearTimeout(t);
+  }, [currentWorkout, events, restByExerciseId]);
+
+  if (!currentWorkout) return null;
+
+  const bottomNavPx = 84;
+  const floatingBottom = 'calc(env(safe-area-inset-bottom, 0px) + 96px)';
+  const reorderSideClass = handMode === 'right' ? 'right-4' : 'left-4';
+
+  // ---------- finish handling (unchanged core) ----------
   const applyIncompletePolicy = (w: WorkoutSession, policy: IncompletePolicy): WorkoutSession => {
     if (policy === 'keep') return w;
 
@@ -1170,99 +760,90 @@ const ActiveWorkout: React.FC = () => {
     });
   };
 
-  const cancelWorkout = () => {
-    if (!currentWorkout) return;
-    stopRest();
-
-    if (confirm('Cancel workout? Data will be lost.')) {
-      appendEvent('workout_cancelled', {});
-      clearWorkoutDraft(currentWorkout.id);
-      setCurrentWorkout(null);
-      navigate('/activities/gym', { replace: true });
-    }
-  };
-
-  useEffect(() => {
-    if (!currentWorkout) return;
-
-    const t = window.setTimeout(() => {
-      saveWorkoutDraft({
-        workout: currentWorkout,
-        events,
-        restByExerciseId,
-        updatedAt: Date.now(),
-      });
-    }, 150);
-
-    return () => window.clearTimeout(t);
-  }, [currentWorkout, events, restByExerciseId]);
-
-  if (!currentWorkout) return null;
-
-  const bottomNavPx = 84;
-  const floatingBottom = 'calc(env(safe-area-inset-bottom, 0px) + 96px)';
-
-  const reorderSideClass = handMode === 'right' ? 'right-4' : 'left-4';
-
+  // ---------- UI ----------
   return (
-    <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] animate-in slide-in-from-right duration-300">
-      {/* Your workout control pill stays as-is (you can paste your final version here) */}
-      <div className="fixed z-[140] top-[calc(env(safe-area-inset-top)+25px)] left-0 right-0 flex justify-center">
-        {/* CENTERED WORKOUT CONTROLS */}
-        <div className="sticky z-[115] top-[calc(env(safe-area-inset-top)+48px)]">
-          <div className="relative w-full flex justify-center">
-            <div
+    <div className="h-full w-full flex flex-col">
+      {/* OVERLAY HEADER (Cancel / Time / Finish / Minimize) */}
+      <div
+        className="
+          shrink-0
+          px-3 py-2
+          border-b border-[var(--border)]
+          bg-[var(--bg)]/70
+          backdrop-blur-xl
+        "
+      >
+        <div className="relative w-full flex items-center justify-center">
+          <div className="absolute left-0 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={cancelWorkout}
+              className="h-9 w-9 rounded-xl border border-[var(--border)] bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] transition-colors flex items-center justify-center"
+              aria-label="Cancel workout"
+              title="Cancel workout"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div
+            className="
+              inline-flex items-center gap-3
+              rounded-full
+              border border-[var(--border)]
+              bg-[var(--bg-card)]/45
+              backdrop-blur-xl
+              px-4 py-1.5
+              shadow-sm
+            "
+          >
+            <div className="flex flex-col items-center leading-none">
+              <span className="text-[8px] font-black uppercase tracking-[0.22em] opacity-70">Duration</span>
+              <span className="text-[13px] font-black italic tabular-nums">{formatTime(timer)}</span>
+            </div>
+
+            <div className="w-px h-7 bg-white/10" />
+
+            <button
+              type="button"
+              onClick={openFinish}
               className="
-                inline-flex items-center gap-2
-                bg-[var(--glass)] border border-[var(--border)]
-                backdrop-blur-md
+                px-3 py-1.5
                 rounded-full
-                px-4 py-1.5
-                shadow-lg
-                translate-x-8
+                bg-white text-[var(--primary)]
+                text-[9px] font-black uppercase tracking-widest
+                active:scale-95 transition-transform
               "
             >
-              {/* Cancel */}
-              <button
-                type="button"
-                onClick={cancelWorkout}
-                className="p-1.5 rounded-full hover:bg-white/15 transition-colors"
-                aria-label="Cancel workout"
-              >
-                <X size={16} />
-              </button>
+              Finish
+            </button>
+          </div>
 
-              {/* Time */}
-              <div className="flex flex-col items-center leading-none">
-                <span className="text-[8px] font-black uppercase tracking-[0.25em] opacity-70">
-                  Duration
-                </span>
-                <span className="text-sm font-black italic tabular-nums">
-                  {formatTime(timer)}
-                </span>
-              </div>
-
-              {/* Finish */}
-              <button
-                type="button"
-                onClick={openFinish}
-                className="
-                  px-3 py-1.5
-                  rounded-full
-                  bg-white text-[var(--primary)]
-                  text-[9px] font-black uppercase tracking-widest
-                  active:scale-95 transition-transform
-                "
-              >
-                Finish
-              </button>
-            </div>
+          <div className="absolute right-0 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRequestMinimize}
+              className="h-9 w-9 rounded-xl border border-[var(--border)] bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] transition-colors flex items-center justify-center"
+              aria-label="Minimize"
+              title="Minimize"
+            >
+              <MinusSquare size={16} />
+            </button>
           </div>
         </div>
-
       </div>
-      {/* CONTENT: reduced side padding so cards use width */}
-      <div className="relative px-3 sm:px-4 pt-2 space-y-3 pb-40">
+
+     {/* CONTENT AREA (positioning root for reorder) */}
+      <div className="relative flex-1 overflow-hidden">
+        {/* SCROLLING CONTENT */}
+        <div
+          ref={scrollRef}
+          className={[
+            'h-full overflow-y-auto',
+            mode === 'expanded' ? 'px-4 py-4 space-y-4' : 'px-3 py-3 space-y-3',
+          ].join(' ')}
+          style={{ WebkitOverflowScrolling: 'touch' as any }}
+        >
         <AnimatePresence initial={false}>
           {order.map((id) => {
             const idx = (currentWorkout.logs as any[]).findIndex((l) => l?.logId === id);
@@ -1406,9 +987,11 @@ const ActiveWorkout: React.FC = () => {
             </div>
           </div>
         )}
+
+        </div>
       </div>
 
-      {/* Floating Reorder Toggle (unchanged) */}
+      {/* Floating Reorder Toggle */}
       <button
         type="button"
         onClick={() => setShowReorderTab((v) => !v)}
@@ -1436,16 +1019,19 @@ const ActiveWorkout: React.FC = () => {
       />
 
       {restConfigForExerciseId && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex flex-col justify-end p-4">
-          <div className="bg-[var(--bg)] text-[var(--text)] rounded-[40px] p-6 w-full max-w-md mx-auto border border-[var(--border)] animate-in slide-in-from-bottom duration-300">
-            <div className="flex justify-between items-center mb-5">
-              <h3 className="text-xl font-black italic">REST PER EXERCISE</h3>
-              <button onClick={() => setRestConfigForExerciseId(null)} className="p-2 bg-[var(--bg-card)] border border-[var(--border)] rounded-full">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[260] flex flex-col justify-end p-4">
+          <div className="bg-[var(--bg)] text-[var(--text)] rounded-[32px] p-5 w-full max-w-md mx-auto border border-[var(--border)]">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-black italic">REST PER EXERCISE</h3>
+              <button
+                onClick={() => setRestConfigForExerciseId(null)}
+                className="p-2 bg-[var(--bg-card)] border border-[var(--border)] rounded-full"
+              >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               {[45, 60, 90, 120, 150, 180, 210, 240].map((s) => (
                 <button
                   key={s}
@@ -1467,7 +1053,7 @@ const ActiveWorkout: React.FC = () => {
 
             <button
               onClick={() => setRestConfigForExerciseId(null)}
-              className="w-full mt-5 p-4 rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] font-black text-[10px] uppercase tracking-widest text-[var(--text-muted)]"
+              className="w-full mt-3 p-3 rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] font-black text-[10px] uppercase tracking-widest text-[var(--text-muted)]"
             >
               Close
             </button>
@@ -1476,18 +1062,485 @@ const ActiveWorkout: React.FC = () => {
       )}
 
       {showFinish && currentWorkout && (
-        <>
-          <div className="fixed left-0 right-0 bottom-0 z-[119] pointer-events-none" style={{ height: `${bottomNavPx + 12}px` }} />
-          <FinishWorkoutModal
-            open={showFinish}
-            onClose={() => setShowFinish(false)}
-            workout={currentWorkout}
-            templateIdUsed={currentWorkout.templateIdUsed ?? null}
-            onConfirmFinish={onConfirmFinishFromModal}
-          />
-        </>
+        <FinishWorkoutModal
+          open={showFinish}
+          onClose={() => setShowFinish(false)}
+          workout={currentWorkout}
+          templateIdUsed={currentWorkout.templateIdUsed ?? null}
+          onConfirmFinish={onConfirmFinishFromModal}
+        />
       )}
     </div>
+  );
+});
+
+// ---------------------------
+// ExerciseCard (slim + wide)
+// ---------------------------
+type ExerciseCardProps = {
+  log: ExerciseLogWithId;
+  exIndex: number;
+
+  deleteExercise: (exerciseIndex: number) => void;
+
+  addSet: (exerciseIndex: number) => void;
+  deleteSetConfirmed: (exerciseIndex: number, setIndex: number) => void;
+
+  updateSet: (exerciseIndex: number, setIndex: number, data: Partial<SetLog>) => void;
+  toggleComplete: (exerciseIndex: number, setIndex: number) => void;
+
+  getRestForExercise: (exerciseId: string) => number;
+  setRestConfigForExerciseId: React.Dispatch<React.SetStateAction<string | null>>;
+
+  formatGhost: (exerciseId: string, setIndex: number) => string;
+  getGhost: (exerciseId: string, setIndex: number) => { weight?: number; reps?: number };
+
+  swipeRef: React.MutableRefObject<Record<string, SwipeState>>;
+
+  restRunning: boolean;
+  restRemaining: number;
+  restTotal: number;
+  restAnchor: { logId: string; setId: string } | null;
+
+  stopRest: () => void;
+  addRest: (delta: number) => void;
+};
+
+const ExerciseCard: React.FC<ExerciseCardProps> = (props) => {
+  const {
+    log,
+    exIndex,
+    deleteExercise,
+    addSet,
+    deleteSetConfirmed,
+    updateSet,
+    toggleComplete,
+    getRestForExercise,
+    setRestConfigForExerciseId,
+    formatGhost,
+    getGhost,
+    swipeRef,
+    restRunning,
+    restRemaining,
+    restTotal,
+    restAnchor,
+    stopRest,
+    addRest,
+  } = props;
+
+  const restForThis = getRestForExercise(log.exerciseId);
+  const [armedDeleteKey, setArmedDeleteKey] = useState<string | null>(null);
+  const armTimerRef = useRef<number | null>(null);
+
+  const disarm = () => {
+    setArmedDeleteKey(null);
+    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    armTimerRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => {
+      if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    };
+  }, []);
+
+  const armDelete = (key: string) => {
+    setArmedDeleteKey(key);
+    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    armTimerRef.current = window.setTimeout(() => {
+      setArmedDeleteKey((cur) => (cur === key ? null : cur));
+      armTimerRef.current = null;
+    }, 1200);
+  };
+
+  const isAnchoredExercise = restRunning && restAnchor?.logId === log.logId;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.985 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+      className="
+        w-full
+        rounded-2xl
+        border border-[var(--border)]
+        bg-[var(--bg-card)]/35
+        backdrop-blur-md
+        px-3 py-3
+        overflow-hidden
+      "
+      onPointerDown={() => {
+        if (armedDeleteKey) disarm();
+      }}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="flex-1 min-w-0 font-black italic text-[15px] truncate">{log.exerciseName}</h3>
+
+        <button
+          type="button"
+          data-no-drag
+          onClick={(e) => {
+            e.stopPropagation();
+            setRestConfigForExerciseId(log.exerciseId);
+          }}
+          className="
+            flex items-center gap-1
+            h-8 px-2
+            rounded-xl
+            border border-[var(--border)]
+            bg-[var(--bg)]/55
+            text-[var(--text-muted)]
+            hover:text-[var(--primary)]
+            hover:border-[var(--primary)]
+            transition-colors
+            shrink-0
+          "
+          aria-label="Rest"
+          title="Rest"
+        >
+          <Timer size={15} />
+          <span className="text-[11px] font-black tabular-nums">{formatMMSS(restForThis)}</span>
+        </button>
+
+        <button
+          type="button"
+          data-no-drag
+          onClick={(e) => {
+            e.stopPropagation();
+            deleteExercise(exIndex);
+          }}
+          className="
+            h-8 w-8
+            rounded-xl
+            border border-[var(--border)]
+            bg-[var(--bg)]/55
+            flex items-center justify-center
+            text-[var(--text-muted)]
+            hover:text-red-500 hover:border-red-500
+            transition-colors
+            shrink-0
+          "
+          aria-label="Delete exercise"
+          title="Delete exercise"
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-7 gap-2 px-1 pb-1 text-[9px] font-black uppercase text-[var(--text-muted)] opacity-80">
+        <span>Set</span>
+        <span className="col-span-2">Prev</span>
+        <span className="text-center">Kg</span>
+        <span className="text-center">Reps</span>
+        <span className="text-center">✓</span>
+        <span className="text-center">Del</span>
+      </div>
+
+      <div className="space-y-1.5">
+        {log.sets.map((set, setIndex) => {
+          const completed = !!set.isCompleted;
+          const ghostLabel = formatGhost(log.exerciseId, setIndex);
+          const g = getGhost(log.exerciseId, setIndex);
+          const key = set.id;
+
+          const isAnchoredSet = restRunning && restAnchor?.logId === log.logId && restAnchor?.setId === set.id;
+          const isArmed = armedDeleteKey === key;
+
+          const onTouchStart: React.TouchEventHandler<HTMLDivElement> = (e) => {
+            const t = e.touches[0];
+            swipeRef.current[key] = { startX: t.clientX, startY: t.clientY, swiping: false, triggered: false };
+          };
+
+          const onTouchMove: React.TouchEventHandler<HTMLDivElement> = (e) => {
+            const st = swipeRef.current[key];
+            if (!st) return;
+            const t = e.touches[0];
+            const dx = t.clientX - st.startX;
+            const dy = t.clientY - st.startY;
+
+            if (!st.swiping) {
+              if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) st.swiping = true;
+            }
+            if (st.swiping && !st.triggered && dx < -SWIPE_DELETE_PX) {
+              st.triggered = true;
+              deleteSetConfirmed(exIndex, setIndex);
+              disarm();
+            }
+          };
+
+          const onTouchEnd: React.TouchEventHandler<HTMLDivElement> = () => {
+            delete swipeRef.current[key];
+          };
+
+          return (
+            <div
+              key={set.id}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+              className={[
+                'grid grid-cols-7 gap-2 items-center px-1 py-1.5 rounded-xl transition-colors',
+                completed ? 'bg-[var(--primary-soft)]/70' : 'bg-transparent',
+              ].join(' ')}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <span className="font-black text-[12px]">{setIndex + 1}</span>
+
+              <span className="col-span-2 text-[9px] font-black uppercase tracking-wider text-[var(--text-muted)] truncate opacity-80">
+                {ghostLabel || '—'}
+              </span>
+
+              <input
+                data-no-drag
+                inputMode="decimal"
+                value={set.weight === 0 ? '' : String(set.weight)}
+                placeholder={g.weight != null ? String(g.weight) : '0'}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(',', '.');
+                  const cleaned = raw.replace(/[^0-9.]/g, '');
+                  const num = cleaned === '' ? 0 : Number(cleaned);
+                  updateSet(exIndex, setIndex, { weight: Number.isFinite(num) ? num : 0 });
+                }}
+                className="
+                  rounded-lg
+                  px-2 py-1.5
+                  text-[12px] font-black text-center
+                  w-full
+                  bg-[var(--bg)]/55
+                  border border-[var(--border)]
+                  text-[var(--text)]
+                  placeholder:text-[var(--text-muted)]
+                  focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]
+                "
+              />
+
+              <input
+                data-no-drag
+                inputMode="numeric"
+                value={set.reps === 0 ? '' : String(set.reps)}
+                placeholder={g.reps != null ? String(g.reps) : '0'}
+                onChange={(e) => {
+                  const cleaned = e.target.value.replace(/[^0-9]/g, '');
+                  const num = cleaned === '' ? 0 : parseInt(cleaned, 10);
+                  updateSet(exIndex, setIndex, { reps: Number.isFinite(num) ? num : 0 });
+                }}
+                className="
+                  rounded-lg
+                  px-2 py-1.5
+                  text-[12px] font-black text-center
+                  w-full
+                  bg-[var(--bg)]/55
+                  border border-[var(--border)]
+                  text-[var(--text)]
+                  placeholder:text-[var(--text-muted)]
+                  focus:outline-none focus:ring-2 focus:ring-[var(--primary-soft)]
+                "
+              />
+
+              <div className="relative flex justify-center">
+                <button
+                  data-no-drag
+                  type="button"
+                  onClick={() => toggleComplete(exIndex, setIndex)}
+                  className={[
+                    'relative flex justify-center items-center h-9 w-9 rounded-xl transition-all border',
+                    completed
+                      ? 'bg-[var(--primary)] text-white border-white/10'
+                      : 'bg-[var(--bg)]/55 text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--primary)] hover:border-[var(--primary)]',
+                  ].join(' ')}
+                  aria-label="Toggle set completed"
+                >
+                  <Check size={16} />
+                  {isAnchoredSet && (
+                    <span className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full bg-[var(--primary)] text-white text-[10px] font-black shadow tabular-nums">
+                      {formatMMSS(restRemaining)}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              <button
+                data-no-drag
+                type="button"
+                onClick={() => {
+                  if (isArmed) {
+                    deleteSetConfirmed(exIndex, setIndex);
+                    disarm();
+                    return;
+                  }
+                  armDelete(key);
+                }}
+                className={[
+                  'flex justify-center items-center h-9 w-9 mx-auto rounded-xl transition-all border',
+                  isArmed
+                    ? 'bg-red-500/15 text-red-500 border-red-500'
+                    : 'bg-[var(--bg)]/55 text-[var(--text-muted)] border-[var(--border)] hover:text-red-500 hover:border-red-500',
+                ].join(' ')}
+                aria-label={isArmed ? 'Tap again to confirm delete' : 'Delete set'}
+                title={isArmed ? 'Tap again to confirm' : 'Delete'}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {isAnchoredExercise && (
+        <div className="mt-2 rounded-2xl border border-[var(--border)] bg-[var(--bg)]/55 overflow-hidden">
+          <div className="px-3 py-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Timer size={15} className="text-[var(--primary)]" />
+              <span className="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Rest</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                data-no-drag
+                type="button"
+                onClick={() => addRest(-30)}
+                className="px-2 py-1.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+              >
+                -30
+              </button>
+
+              <span className="text-lg font-black italic text-[var(--primary)] tabular-nums min-w-[58px] text-center">
+                {formatMMSS(restRemaining)}
+              </span>
+
+              <button
+                data-no-drag
+                type="button"
+                onClick={() => addRest(+30)}
+                className="px-2 py-1.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+              >
+                +30
+              </button>
+
+              <button
+                data-no-drag
+                type="button"
+                onClick={stopRest}
+                className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-red-500 hover:border-red-500 transition-colors"
+                aria-label="Cancel rest"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+
+          <div className="h-1.5 bg-[var(--bg)] border-t border-[var(--border)]">
+            <div className="h-full bg-[var(--primary)]" style={{ width: `${restTotal > 0 ? (restRemaining / restTotal) * 100 : 0}%` }} />
+          </div>
+        </div>
+      )}
+
+      <button
+        data-no-drag
+        type="button"
+        onClick={() => addSet(exIndex)}
+        className="
+          w-full mt-2
+          border border-dashed border-[var(--border)]
+          px-3 py-2
+          rounded-xl
+          text-[var(--text-muted)]
+          font-black text-[10px] uppercase tracking-widest
+          hover:border-[var(--primary)]
+          hover:text-[var(--primary)]
+          transition-colors
+        "
+      >
+        + Add set
+      </button>
+    </motion.div>
+  );
+};
+
+// ---------------------------
+// Reorder Overview Row
+// ---------------------------
+type OverviewRowProps = {
+  id: string;
+  log: ExerciseLogWithId;
+  pos: number;
+  count: number;
+
+  onDeleteAtLogIndex: (logIndex: number) => void;
+  logIndex: number;
+
+  onMovePos: (fromPos: number, toPos: number) => void;
+};
+
+const OverviewRow: React.FC<OverviewRowProps> = ({ id, log, pos, count, onDeleteAtLogIndex, logIndex, onMovePos }) => {
+  const done = log.sets.filter((s) => s.isCompleted).length;
+  const total = log.sets.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  return (
+    <Reorder.Item
+      value={id}
+      whileDrag={{ scale: 1.01, zIndex: 999, boxShadow: '0 22px 60px rgba(0,0,0,0.35)' }}
+      transition={{ type: 'spring', stiffness: 380, damping: 34 }}
+      className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden touch-none"
+      style={{ touchAction: 'none' }}
+    >
+      <div className="flex items-center gap-3 px-3 h-14">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
+              {pos + 1}/{count}
+            </span>
+            <h3 className="font-black italic text-xs truncate">{log.exerciseName}</h3>
+          </div>
+
+          <div className="mt-1 flex items-center gap-2">
+            <span className="text-[10px] font-black text-[var(--text-muted)]">
+              {done}/{total}
+            </span>
+            <div className="h-1.5 flex-1 bg-[var(--bg)] rounded-full overflow-hidden border border-[var(--border)]">
+              <div className="h-full bg-[var(--primary)]" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          data-no-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onMovePos(pos, pos - 1)}
+          disabled={pos === 0}
+          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+          aria-label="Move up"
+        >
+          <ChevronUp size={16} />
+        </button>
+
+        <button
+          type="button"
+          data-no-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onMovePos(pos, pos + 1)}
+          disabled={pos === count - 1}
+          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors"
+          aria-label="Move down"
+        >
+          <ChevronDown size={16} />
+        </button>
+
+        <button
+          type="button"
+          data-no-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onDeleteAtLogIndex(logIndex)}
+          className="w-9 h-9 rounded-xl border border-[var(--border)] bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-red-500 hover:border-red-500 transition-colors"
+          aria-label="Delete exercise"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    </Reorder.Item>
   );
 };
 
@@ -1502,4 +1555,6 @@ function computeWorkoutVolume(w: WorkoutSession): number {
   return total;
 }
 
-export default ActiveWorkout;
+// Route component stays empty (overlay is used inside AppShell)
+const ActiveWorkoutRoute: React.FC = () => null;
+export default ActiveWorkoutRoute;

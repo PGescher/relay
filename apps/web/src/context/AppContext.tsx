@@ -6,6 +6,12 @@ import type { WorkoutSession } from '@relay/shared';
 export type HandMode = 'right' | 'left';
 export type NavDock = 'left' | 'center' | 'right';
 
+export type ActiveOverlayState =
+  | { mode: 'hidden' }
+  | { mode: 'expanded' }
+  | { mode: 'minimized'; dock: 'left' | 'right' };
+
+
 interface AppContextType {
   currentWorkout: WorkoutSession | null;
   setCurrentWorkout: (workout: WorkoutSession | null) => void;
@@ -32,6 +38,14 @@ interface AppContextType {
 
   // derived: final dock side used by UI (mirrors handMode if navDock is left/right)
   derivedNavDock: NavDock;
+
+  // Active session overlay UI state (to control AppShell interaction + header)
+  activeOverlay: ActiveOverlayState; 
+  setActiveOverlay: (v: ActiveOverlayState) => void;
+
+  // one-way trigger: request the session overlay to expand (e.g. from GymDashboard "Resume")
+  overlayExpandReq: number;
+  requestOverlayExpand: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -79,6 +93,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ✅ Global UX state
   const [handMode, setHandModeState] = useState<HandMode>(() => loadHandMode());
   const [navDock, setNavDockState] = useState<NavDock>(() => loadNavDock());
+
+  // Active overlay state is driven by ActiveSessionOverlay
+  const [activeOverlay, setActiveOverlay] = useState<ActiveOverlayState>({ mode: 'hidden' });
+
+  // increment-only trigger
+  const [overlayExpandReq, setOverlayExpandReq] = useState(0);
+  const requestOverlayExpand = () => setOverlayExpandReq((x) => x + 1);
 
   const navigate = useNavigate();
 
@@ -130,6 +151,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         navDock,
         setNavDock,
         derivedNavDock,
+
+        activeOverlay,
+        setActiveOverlay,
+
+        overlayExpandReq,
+        requestOverlayExpand,
       }}
     >
       {children}
