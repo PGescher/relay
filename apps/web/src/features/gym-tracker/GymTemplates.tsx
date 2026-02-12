@@ -64,19 +64,18 @@ const GymTemplates: React.FC<Props> = ({ onStartTemplate }) => {
       module: 'GYM',
       templateIdUsed: t.id,
       logs: ex.map((e) => ({
-        // in deinem shared gibt's eig. kein logId – wenn du's willst: bitte in Typ aufnehmen
         exerciseId: e.exerciseId,
         exerciseName: e.exerciseName,
         restSecDefault: e.restSec,
-        sets: (e.sets?.length ? e.sets : Array.from({ length: e.targetSets }).map(() => ({ reps: 0, weight: 0 }))).map(
-          (s) => ({
-            id: uid(),
-            reps: s.reps ?? 0,
-            weight: s.weight ?? 0,
-            isCompleted: false,
-            restPlannedSec: e.restSec,
-          })
-        ),
+        sets: (e.sets && e.sets.length > 0 
+          ? e.sets 
+          : Array.from({ length: e.targetSets || 1 }).map(() => ({ reps: 0, weight: 0 }))
+        ).map((s) => ({
+          id: uid(),
+          reps: s.reps ?? 0,
+          weight: s.weight ?? 0,
+          isCompleted: false,
+        })),
       })),
     };
 

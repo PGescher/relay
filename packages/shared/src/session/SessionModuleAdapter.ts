@@ -1,6 +1,7 @@
 // packages/shared/src/session/SessionModuleAdapter.ts
 
 import type { SessionModuleKey } from './SessionTypes';
+import type { ActiveSessionMeta } from './activeSession'; // wherever it lives
 
 export type SessionViewApi<TState = unknown> = {
   setState: (nextState: TState) => void;
@@ -9,6 +10,20 @@ export type SessionViewApi<TState = unknown> = {
   finish: () => Promise<void>;
   cancel: () => void;
 };
+
+export type SessionKernelContext = {
+  userId?: string | null;
+  token?: string | null;
+};
+
+export type SessionFinishArgs<S> = {
+  sessionId: string;
+  module: SessionModuleKey;          // ✅ add
+  state: S;
+  meta?: ActiveSessionMeta;
+  ctx: SessionKernelContext;         // ✅ add (kommt gleich)
+};
+
 
 /**
  * A UI component provided by a module.
@@ -35,10 +50,23 @@ export interface SessionModuleAdapter<State = unknown, StartPayload = unknown> {
     api: SessionViewApi<State>;
   }>;
 
-  onFinish(args: { sessionId: string; state: State }): Promise<void> | void;
+  onFinish(args: {
+    sessionId: string;
+    module: SessionModuleKey;
+    state: State;
+    meta?: ActiveSessionMeta;
+    ctx: SessionKernelContext;
+  }): Promise<void> | void;
 
-  onCancel?(args: { sessionId: string; state: State }): Promise<void> | void;
+  onCancel?(args: {
+    sessionId: string;
+    module: SessionModuleKey;
+    state: State;
+    meta?: ActiveSessionMeta;
+    ctx: SessionKernelContext;
+  }): Promise<void> | void;
 
   serialize?(state: State): unknown;
   deserialize?(raw: unknown): State;
 }
+

@@ -16,6 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 
 import { EXERCISES } from './constants';
 import {
+  SessionViewApi,
   WorkoutStatus,
   type ExerciseLog,
   type SetLog,
@@ -24,14 +25,17 @@ import {
   type WorkoutTemplate,
 } from '@relay/shared';
 
+import { type GymSessionState } from './gymSessionAdapter';
+
 import { saveWorkoutDraft, clearWorkoutDraft, loadLastWorkoutDraft } from './workoutDraft';
 import { FinishWorkoutModal } from './FinishWorkoutModal';
 import { ExerciseLibraryModal } from './ExerciseLibraryModal';
+import { gymSessionAdapter } from './gymSessionAdapter';
 
-import { apiPushGymComplete } from '../../data/apiClient';
-import { enqueuePending } from '../../data/sync/pendingQueue';
-import { upsertWorkouts } from '../../data/workoutCache';
-import { syncNow } from '../../data/sync/syncManager';
+//import { apiPushGymComplete } from '../../data/apiClient';
+//import { enqueuePending } from '../../data/sync/pendingQueue';
+//import { upsertWorkouts } from '../../data/workoutCache';
+//import { syncNow } from '../../data/sync/syncManager';
 
 const REST_STORAGE_KEY = 'relay:gym:restByExerciseId:v1';
 const uid = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -65,7 +69,7 @@ type SwipeState = {
 };
 
 const SWIPE_DELETE_PX = 70;
-type IncompletePolicy = 'delete' | 'complete' | 'keep';
+type IncompletePolicy = 'delete' | 'complete';
 
 type ExerciseLogWithId = ExerciseLog & { logId: string };
 
@@ -91,8 +95,8 @@ export type ActiveWorkoutOverlayHandle = {
 
 export const ActiveWorkoutOverlay = forwardRef<
   ActiveWorkoutOverlayHandle,
-  { mode: OverlayMode; onRequestMinimize: () => void }
->(function ActiveWorkoutOverlay({ mode, onRequestMinimize }, ref) {
+  { mode: OverlayMode; onRequestMinimize: () => void; sessionId: string; state: GymSessionState; api: SessionViewApi<GymSessionState> }
+>(function ActiveWorkoutOverlay({ mode, onRequestMinimize, sessionId, state, api }, ref) {
   const reduceMotion = useReducedMotion();
 
   const app = useApp() as any;
@@ -106,18 +110,33 @@ export const ActiveWorkoutOverlay = forwardRef<
     startSession,
   } = app;
 
+  /*
   const currentWorkout: WorkoutSession | null =
     activeSession?.module === 'GYM' && activeSession.lifecycle === 'ACTIVE'
       ? (activeSession.state as WorkoutSession)
       : null;
+  */
+  const { workout } = state;
 
-  const setCurrentWorkout = (next: WorkoutSession | null) => {
-    if (!next) {
-      cancelSession?.();
-      return;
-    }
-    setActiveSessionState?.(next);
+  const gymState = activeSession?.module === 'GYM' ? (activeSession.state as GymSessionState) : null;
+
+  const currentWorkout = gymState?.workout ?? null;
+  const events = gymState?.events ?? [];
+  const restByExerciseId = gymState?.restByExerciseId ?? {};
+
+  const setGymState = (patch: Partial<GymSessionState>) => {
+    api.setState({ ...state, ...patch });
   };
+
+  const setWorkout = (next: WorkoutSession) => {
+    setGymState({ workout: next });
+  };
+
+  const setCurrentWorkout = (next: WorkoutSession) => {
+    if (!gymState) return;
+    setGymState({ workout: next });
+  };
+
 
   const navigate = useNavigate();
   const { user, token } = useAuth();
@@ -133,17 +152,10 @@ export const ActiveWorkoutOverlay = forwardRef<
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const [events, setEvents] = useState<WorkoutEvent[]>([]);
+  //const [events, setEvents] = useState<WorkoutEvent[]>([]);
   const appendEvent = (type: WorkoutEvent['type'], payload?: WorkoutEvent['payload']) => {
-    if (!currentWorkout) return;
-    const ev: WorkoutEvent = {
-      id: uid(),
-      workoutId: currentWorkout.id,
-      at: Date.now(),
-      type,
-      payload,
-    };
-    setEvents((prev) => [ev, ...prev]);
+    const ev: WorkoutEvent = { id: uid(), workoutId: state.workout.id, at: Date.now(), type, payload };
+    setGymState({ events: [ev, ...(state.events ?? [])] });
   };
 
   const [restRemaining, setRestRemaining] = useState<number>(0);
@@ -154,7 +166,7 @@ export const ActiveWorkoutOverlay = forwardRef<
   const [restAnchor, setRestAnchor] = useState<{ logId: string; setId: string } | null>(null);
 
   const DEFAULT_REST = 120;
-  const [restByExerciseId, setRestByExerciseId] = useState<Record<string, number>>({});
+  //const [restByExerciseId, setRestByExerciseId] = useState<Record<string, number>>({});
   const [restConfigForExerciseId, setRestConfigForExerciseId] = useState<string | null>(null);
 
   const swipeRef = useRef<Record<string, SwipeState>>({});
@@ -165,26 +177,13 @@ export const ActiveWorkoutOverlay = forwardRef<
 
   const [order, setOrder] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (currentWorkout) return;
-
-    const draft = loadLastWorkoutDraft();
-    if (draft?.workout?.status === "active") {
-      startSession?.('GYM', draft.workout);
-      setEvents(draft.events ?? []);
-      setRestByExerciseId(draft.restByExerciseId ?? {});
-      return;
-    }
-
-    navigate('/activities/gym', { replace: true });
-  }, [currentWorkout, setCurrentWorkout, navigate]);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(REST_STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') setRestByExerciseId(parsed);
+      if (parsed && typeof parsed === 'object') setGymState({ restByExerciseId: { ...restByExerciseId, [parsed]: 'object' } });
     } catch {}
   }, []);
 
@@ -289,6 +288,12 @@ export const ActiveWorkoutOverlay = forwardRef<
   };
 
   useEffect(() => {
+    // Wenn du hier bist, aber keine aktive Gym-Session existiert → zurück.
+    if (!currentWorkout) navigate('/activities/gym', { replace: true });
+  }, [currentWorkout, navigate]);
+
+
+  useEffect(() => {
     if (!showReorderTab) return;
     requestAnimationFrame(() => {
       reorderScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' as any });
@@ -325,7 +330,8 @@ export const ActiveWorkoutOverlay = forwardRef<
   const getRestForExercise = (exerciseId: string) => restByExerciseId[exerciseId] ?? DEFAULT_REST;
 
   const ensureRestEntry = (exerciseId: string) => {
-    setRestByExerciseId((prev) => (prev[exerciseId] ? prev : { ...prev, [exerciseId]: DEFAULT_REST }));
+    setGymState({ restByExerciseId: { ...restByExerciseId, [exerciseId]: DEFAULT_REST } });
+
   };
 
   const applyOrderToWorkout = (nextOrder: string[]) => {
@@ -562,9 +568,7 @@ export const ActiveWorkoutOverlay = forwardRef<
     stopRest();
 
     if (confirm('Cancel workout? Data will be lost.')) {
-      appendEvent('workout_cancelled', {});
-      clearWorkoutDraft(currentWorkout.id);
-      cancelSession?.();
+      cancelSession();
       navigate('/activities/gym', { replace: true });
     }
   }, [currentWorkout, stopRest, navigate]);
@@ -583,21 +587,6 @@ export const ActiveWorkoutOverlay = forwardRef<
     [cancelWorkout, openFinish]
   );
 
-  useEffect(() => {
-    if (!currentWorkout) return;
-
-    const t = window.setTimeout(() => {
-      saveWorkoutDraft({
-        workout: currentWorkout,
-        events,
-        restByExerciseId,
-        updatedAt: Date.now(),
-      });
-    }, 150);
-
-    return () => window.clearTimeout(t);
-  }, [currentWorkout, events, restByExerciseId]);
-
   if (!currentWorkout) return null;
 
   const bottomNavPx = 84;
@@ -606,7 +595,6 @@ export const ActiveWorkoutOverlay = forwardRef<
 
   // ---------- finish handling (unchanged core) ----------
   const applyIncompletePolicy = (w: WorkoutSession, policy: IncompletePolicy): WorkoutSession => {
-    if (policy === 'keep') return w;
 
     const now = Date.now();
 
@@ -640,19 +628,18 @@ export const ActiveWorkoutOverlay = forwardRef<
     templateName?: string;
     updateUsedTemplate: boolean;
   }) => {
+    const currentWorkout = state.workout;
     if (!currentWorkout) return;
     if (finishing) return;
 
     setFinishing(true);
-    appendEvent('workout_finish_opened', { incompleteCount });
 
     const now = Date.now();
-
     const baseFinished: WorkoutSession = {
       ...currentWorkout,
       dataVersion: 1,
       endTime: now,
-      status: "completed",
+      status: 'completed',
       durationSec: Math.round((now - currentWorkout.startTime) / 1000),
       rpeOverall: opts.rpeOverall,
     };
@@ -661,110 +648,20 @@ export const ActiveWorkoutOverlay = forwardRef<
     const totalVolume = computeWorkoutVolume(finished);
     const finished2: WorkoutSession = { ...finished, totalVolume };
 
-    appendEvent('workout_finished', { totalVolume, rpeOverall: opts.rpeOverall, incompletePolicy: opts.policy });
+    // ✅ bridge: adapter bekommt alles was es braucht über state
+    api.setState({
+      ...state,
+      workout: finished2,
+      finishRequest: {
+        workout: finished2,
+        opts,
+      },
+    });
 
-    const completePayload = { workout: finished2, events, restByExerciseId };
-
-    if (user?.id) {
-      upsertWorkouts(user.id, [{ id: finished2.id, module: finished2.module, data: finished2 }]);
-    }
-
-    let pushed = false;
-
-    try {
-      if (!token || !user?.id) throw new Error('No auth');
-      await apiPushGymComplete({ token, payload: completePayload });
-      pushed = true;
-    } catch (e) {
-      console.warn('Workout push failed. Queueing pending sync.', e);
-      if (user?.id) enqueuePending(user.id, finished2.id, completePayload);
-    }
-
-    try {
-      if (opts.saveAsTemplate && user?.id) {
-        const name = opts.templateName?.trim() || `Template ${new Date(finished2.startTime).toLocaleDateString('en-US')}`;
-
-        const body: WorkoutTemplate = {
-          dataVersion: 1,
-          id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          module: 'GYM',
-          name,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          data: {
-            exercises: finished2.logs.map((l) => ({
-              exerciseId: l.exerciseId,
-              exerciseName: l.exerciseName,
-              targetSets: l.sets.length,
-              restSec: l.restSecDefault ?? 120,
-              sets: l.sets.map((s) => ({ reps: s.reps ?? 0, weight: s.weight ?? 0 })),
-            })),
-          },
-        };
-
-        const payload = { method: 'POST' as const, endpoint: '/api/templates/gym', body };
-
-        if (pushed && token) {
-          await fetch(payload.endpoint, {
-            method: payload.method,
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify(payload.body),
-          }).catch(() => {});
-        } else {
-          const { enqueuePendingTemplate } = await import('../../data/sync/pendingTemplates');
-          enqueuePendingTemplate(user.id, body.id, payload);
-        }
-      }
-
-      if (opts.updateUsedTemplate && finished2.templateIdUsed && user?.id) {
-        const body = {
-          name: null,
-          dataVersion: 1,
-          data: {
-            exercises: finished2.logs.map((l) => ({
-              exerciseId: l.exerciseId,
-              exerciseName: l.exerciseName,
-              targetSets: l.sets.length,
-              restSec: l.restSecDefault ?? 120,
-              sets: l.sets.map((s) => ({ reps: s.reps ?? 0, weight: s.weight ?? 0 })),
-            })),
-          },
-        };
-
-        const payload = { method: 'PUT' as const, endpoint: `/api/templates/gym/${finished2.templateIdUsed}`, body };
-
-        if (pushed && token) {
-          await fetch(payload.endpoint, {
-            method: payload.method,
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify(payload.body),
-          }).catch(async () => {
-            const { enqueuePendingTemplate } = await import('../../data/sync/pendingTemplates');
-            enqueuePendingTemplate(user.id, `upd-${finished2.templateIdUsed}`, payload);
-          });
-        } else {
-          const { enqueuePendingTemplate } = await import('../../data/sync/pendingTemplates');
-          enqueuePendingTemplate(user.id, `upd-${finished2.templateIdUsed}`, payload);
-        }
-      }
-    } catch (e) {
-      console.warn('Template queue/save failed', e);
-    }
-
-    clearWorkoutDraft(finished2.id);
-
-    setWorkoutHistory([finished2, ...workoutHistory]);
-
-    // close UI first
     setShowFinish(false);
     setFinishing(false);
 
-    await finishSession?.();
-
-    if (pushed && user?.id && token) {
-      syncNow({ userId: user.id, token, module: 'GYM' }).catch(() => {});
-    }
-
+    await api.finish();          // <-- Kernel -> Adapter.onFinish(state)
     navigate('/activities/gym', { replace: true });
   };
 
@@ -1061,7 +958,7 @@ export const ActiveWorkoutOverlay = forwardRef<
                 <button
                   key={s}
                   onClick={() => {
-                    setRestByExerciseId((prev) => ({ ...prev, [restConfigForExerciseId]: s }));
+                    setGymState({ restByExerciseId: { ...restByExerciseId, [restConfigForExerciseId]: s } });
                     setRestConfigForExerciseId(null);
                   }}
                   className={[

@@ -8,6 +8,8 @@ import { ACTIVE_SESSION_VERSION } from '@relay/shared';
 
 import { getModuleAdapter } from '../session/moduleRegistry';
 
+import { useAuth } from './AuthContext';
+
 const ACTIVE_SESSION_STORAGE_KEY = 'relay:activeSession:v1';
 
 export type HandMode = 'right' | 'left';
@@ -99,6 +101,11 @@ const saveNavDock = (v: NavDock) => {
 };
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+
+  const { user, token } = useAuth();
+
+  const ctx = { userId: user?.id ?? null, token: token ?? null };
+
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
 
   const setActiveSessionState = (nextState: unknown) => {
@@ -111,6 +118,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     });
   };
+
+  const [isSessionMutating, setIsSessionMutating] = useState(false);
 
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutSession[]>([]);
   const [isViewingActiveWorkout, setIsViewingActiveWorkout] = useState(false);
@@ -145,6 +154,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setNavDockState(v);
     saveNavDock(v);
   };
+  
 
   // ✅ Derived behavior:
   // - center stays center
@@ -253,30 +263,67 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const finishSession = async () => {
-    if (!activeSession) return;
+    if (!activeSession || isSessionMutating) return;
+    setIsSessionMutating(true);
+
+    const snapshot = activeSession; // freeze reference
+
+    // optionally mark UI as "finishing" so views can disable buttons
+    setActiveSession((prev) =>
+      prev
+        ? { ...prev, lifecycle: 'FINISHING' as any, meta: { ...prev.meta, lastActiveAt: Date.now() } }
+        : prev
+    );
 
     try {
-      const adapter = getModuleAdapter(activeSession.module);
-      await adapter.onFinish({ sessionId: activeSession.id, state: activeSession.state });
+      const adapter = getModuleAdapter(snapshot.module);
+
+      await adapter.onFinish({
+        sessionId: snapshot.id,
+        module: snapshot.module,
+        state: snapshot.state,
+        meta: snapshot.meta,
+        ctx,
+      });
+
+      setActiveSession(null);
     } catch (e) {
       console.warn('Session finish hook failed', e);
+
+      // if finish fails, revert lifecycle so user can retry
+      setActiveSession((prev) =>
+        prev ? { ...prev, lifecycle: 'ACTIVE', meta: { ...prev.meta, lastActiveAt: Date.now() } } : prev
+      );
+
+      setIsSessionMutating(false);
+      return;
     }
 
-    setActiveSession(null);
+    setIsSessionMutating(false);
   };
 
-
   const cancelSession = () => {
-    if (!activeSession) return;
+    if (!activeSession || isSessionMutating) return;
+    setIsSessionMutating(true);
+
+    const snapshot = activeSession;
 
     try {
-      const adapter = getModuleAdapter(activeSession.module);
-      adapter.onCancel?.({ sessionId: activeSession.id, state: activeSession.state });
+      const adapter = getModuleAdapter(snapshot.module);
+        adapter.onCancel?.({
+        sessionId: snapshot.id,
+        module: snapshot.module,
+        state: snapshot.state,
+        meta: snapshot.meta,
+        ctx,
+      });
+
+      setActiveSession(null);
     } catch (e) {
       console.warn('Session cancel hook failed', e);
     }
 
-    setActiveSession(null);
+    setIsSessionMutating(false);
   };
 
 
