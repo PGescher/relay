@@ -14,6 +14,9 @@ import { AnimatePresence, Reorder, motion, useReducedMotion } from 'framer-motio
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
 
+import { flushSync } from 'react-dom';
+
+
 import { EXERCISES } from './constants';
 import {
   SessionViewApi,
@@ -118,23 +121,25 @@ export const ActiveWorkoutOverlay = forwardRef<
   */
   const { workout } = state;
 
-  const gymState = activeSession?.module === 'GYM' ? (activeSession.state as GymSessionState) : null;
+  const currentWorkout = state.workout ?? null;
+  const events = state.events ?? [];
+  const restByExerciseId = state.restByExerciseId ?? {};
 
-  const currentWorkout = gymState?.workout ?? null;
-  const events = gymState?.events ?? [];
-  const restByExerciseId = gymState?.restByExerciseId ?? {};
-
+  //Muss functional updaten
   const setGymState = (patch: Partial<GymSessionState>) => {
-    api.setState({ ...state, ...patch });
+    api.setState((prev: GymSessionState) => ({ ...prev, ...patch }));
   };
+
 
   const setWorkout = (next: WorkoutSession) => {
     setGymState({ workout: next });
   };
 
   const setCurrentWorkout = (next: WorkoutSession) => {
-    if (!gymState) return;
-    setGymState({ workout: next });
+    api.setState((prev: GymSessionState) => ({
+      ...prev,
+      workout: next,
+    }));
   };
 
 
@@ -154,9 +159,13 @@ export const ActiveWorkoutOverlay = forwardRef<
 
   //const [events, setEvents] = useState<WorkoutEvent[]>([]);
   const appendEvent = (type: WorkoutEvent['type'], payload?: WorkoutEvent['payload']) => {
-    const ev: WorkoutEvent = { id: uid(), workoutId: state.workout.id, at: Date.now(), type, payload };
-    setGymState({ events: [ev, ...(state.events ?? [])] });
+    const ev: WorkoutEvent = { id: uid(), workoutId: currentWorkout.id, at: Date.now(), type, payload };
+    api.setState((prev: GymSessionState) => ({
+      ...prev,
+      events: [ev, ...(prev.events ?? [])],
+    }));
   };
+
 
   const [restRemaining, setRestRemaining] = useState<number>(0);
   const [restTotal, setRestTotal] = useState<number>(0);
@@ -183,7 +192,9 @@ export const ActiveWorkoutOverlay = forwardRef<
       const raw = localStorage.getItem(REST_STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') setGymState({ restByExerciseId: { ...restByExerciseId, [parsed]: 'object' } });
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      setGymState({ restByExerciseId: { ...restByExerciseId, ...parsed } });
+    }
     } catch {}
   }, []);
 
@@ -649,6 +660,7 @@ export const ActiveWorkoutOverlay = forwardRef<
     const finished2: WorkoutSession = { ...finished, totalVolume };
 
     // ✅ bridge: adapter bekommt alles was es braucht über state
+    /*
     api.setState({
       ...state,
       workout: finished2,
@@ -657,10 +669,14 @@ export const ActiveWorkoutOverlay = forwardRef<
         opts,
       },
     });
-
-    setShowFinish(false);
-    setFinishing(false);
-
+    */
+    flushSync(() => {
+      api.setState((prev: GymSessionState) => ({
+        ...prev,
+        workout: finished2,
+        finishRequest: { workout: finished2, opts },
+      }));
+    });
     await api.finish();          // <-- Kernel -> Adapter.onFinish(state)
     navigate('/activities/gym', { replace: true });
   };

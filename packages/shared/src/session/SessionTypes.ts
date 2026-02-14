@@ -11,7 +11,7 @@ import { ActivityModule } from "..";
  */
 export type SessionModuleKey = ActivityModule | 'RECOVERY' | 'NUTRITION' | 'CUSTOM';
 
-export type SessionLifecycle = 'ACTIVE' | 'FINISHED' | 'CANCELLED';
+export type SessionLifecycle = 'ACTIVE' | 'FINISHED' | 'CANCELLED' | 'FINISHING';
 
 export type OverlayMode = 'EXPANDED' | 'MINIMIZED';
 

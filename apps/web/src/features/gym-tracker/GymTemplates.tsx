@@ -64,6 +64,7 @@ const GymTemplates: React.FC<Props> = ({ onStartTemplate }) => {
       module: 'GYM',
       templateIdUsed: t.id,
       logs: ex.map((e) => ({
+        logId: uid(),
         exerciseId: e.exerciseId,
         exerciseName: e.exerciseName,
         restSecDefault: e.restSec,
@@ -75,6 +76,7 @@ const GymTemplates: React.FC<Props> = ({ onStartTemplate }) => {
           reps: s.reps ?? 0,
           weight: s.weight ?? 0,
           isCompleted: false,
+          restPlannedSec: e.restSec,
         })),
       })),
     };

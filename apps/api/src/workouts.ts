@@ -204,6 +204,7 @@ router.get('/', requireAuth, async (req: AuthedRequest, res) => {
     const rows = await prisma.workout.findMany({
       where: {
         userId: req.userId!,
+        deletedAt: null,
         ...(module ? { module } : {}),
         ...(statusQ ? { status: statusQ as any } : {}),
       },

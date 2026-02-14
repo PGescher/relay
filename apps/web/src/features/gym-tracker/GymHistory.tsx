@@ -3,10 +3,15 @@ import { Link } from 'react-router-dom';
 import { Calendar, ChevronRight, Clock, Award, Trash2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import SyncButton from '../../components/ui/SyncButton';
+import { deleteWorkouts } from '../../data/workoutCache';
+
+import { useAuth } from '../../context/AuthContext';
 
 const GymHistory: React.FC = () => {
   // ✅ Extract both workoutHistory AND setWorkoutHistory
   const { workoutHistory, setWorkoutHistory } = useApp();
+
+  const { user, token } = useAuth();
 
   const formatDate = (timestamp: number) =>
     new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -32,8 +37,8 @@ const GymHistory: React.FC = () => {
       });
 
       if (res.ok) {
-        // ✅ Remove from local state
-        setWorkoutHistory(workoutHistory.filter(w => w.id !== workoutId));
+        if (user?.id) deleteWorkouts(user.id, [workoutId]);
+        setWorkoutHistory((prev) => prev.filter(w => w.id !== workoutId));
       } else {
         alert("Server failed to delete.");
       }

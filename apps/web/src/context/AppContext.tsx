@@ -8,6 +8,8 @@ import { ACTIVE_SESSION_VERSION } from '@relay/shared';
 
 import { getModuleAdapter } from '../session/moduleRegistry';
 
+import { loadWorkouts, deleteWorkouts } from '../data/workoutCache';
+
 import { useAuth } from './AuthContext';
 
 const ACTIVE_SESSION_STORAGE_KEY = 'relay:activeSession:v1';
@@ -108,9 +110,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
 
-  const setActiveSessionState = (nextState: unknown) => {
+  const activeSessionRef = React.useRef<ActiveSession | null>(null);
+
+  useEffect(() => {
+    activeSessionRef.current = activeSession;
+  }, [activeSession]);
+
+  const setActiveSessionState = (next: unknown) => {
     setActiveSession((prev) => {
       if (!prev) return prev;
+
+      const nextState =
+        typeof next === 'function'
+          ? (next as (p: unknown) => unknown)(prev.state)
+          : next;
+
       return {
         ...prev,
         state: nextState,
@@ -118,6 +132,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     });
   };
+
 
   const [isSessionMutating, setIsSessionMutating] = useState(false);
 
@@ -169,6 +184,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => saveNavDock(navDock), [navDock]);
 
   useEffect(() => {
+    if (!ctx.userId) {
+      setWorkoutHistory([]);
+      return;
+    }
+
+    const cached = loadWorkouts(ctx.userId)
+      .filter((w) => w.module === 'GYM')
+      .map((w) => w.data as WorkoutSession)
+      .filter(Boolean);
+
+    const ts = (w: WorkoutSession) => w.endTime ?? w.updatedAt ?? w.startTime ?? 0;
+    cached.sort((a, b) => ts(b) - ts(a));
+
+    setWorkoutHistory(cached);
+  }, [ctx.userId]);
+
+
+  useEffect(() => {
     try {
       const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
       if (!raw) return;
@@ -192,6 +225,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('Failed to restore active session', e);
     }
   }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ev = e as CustomEvent<WorkoutSession>;
+      const w = ev.detail;
+      if (!w) return;
+
+      setWorkoutHistory((prev) => {
+        const next = [w, ...prev.filter((x) => x.id !== w.id)];
+        return next;
+      });
+    };
+
+    window.addEventListener('relay:gym:workoutFinished', handler as EventListener);
+    return () => window.removeEventListener('relay:gym:workoutFinished', handler as EventListener);
+  }, []);
+
+
 
   useEffect(() => {
     if (!activeSession) {
@@ -263,12 +314,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const finishSession = async () => {
-    if (!activeSession || isSessionMutating) return;
+    const cur = activeSessionRef.current;
+    if (!cur || isSessionMutating) return;
     setIsSessionMutating(true);
 
-    const snapshot = activeSession; // freeze reference
+    const snapshot = cur; // ✅ always latest
 
-    // optionally mark UI as "finishing" so views can disable buttons
     setActiveSession((prev) =>
       prev
         ? { ...prev, lifecycle: 'FINISHING' as any, meta: { ...prev.meta, lastActiveAt: Date.now() } }
@@ -289,18 +340,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setActiveSession(null);
     } catch (e) {
       console.warn('Session finish hook failed', e);
-
-      // if finish fails, revert lifecycle so user can retry
       setActiveSession((prev) =>
         prev ? { ...prev, lifecycle: 'ACTIVE', meta: { ...prev.meta, lastActiveAt: Date.now() } } : prev
       );
-
       setIsSessionMutating(false);
       return;
     }
 
     setIsSessionMutating(false);
   };
+
 
   const cancelSession = () => {
     if (!activeSession || isSessionMutating) return;
