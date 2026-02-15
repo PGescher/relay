@@ -14,7 +14,8 @@ type Props = {
 };
 
 const GymTemplates: React.FC<Props> = ({ onStartTemplate }) => {
-  const { setCurrentWorkout } = useApp();
+  const { startSession, requestOverlayExpand } = useApp();
+
 
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,35 +60,37 @@ const GymTemplates: React.FC<Props> = ({ onStartTemplate }) => {
       id: uid(),
       startTime: Date.now(),
       updatedAt: Date.now(),
-      status: WorkoutStatus.active,
+      status: 'active',       
       module: 'GYM',
       templateIdUsed: t.id,
-
-      // ✅ IMPORTANT: include logId so ActiveWorkout can build `order` immediately
       logs: ex.map((e) => ({
         logId: uid(),
         exerciseId: e.exerciseId,
         exerciseName: e.exerciseName,
         restSecDefault: e.restSec,
-        sets: (e.sets?.length ? e.sets : Array.from({ length: e.targetSets }).map(() => ({ reps: 0, weight: 0 }))).map(
-          (s) => ({
-            id: uid(),
-            reps: s.reps ?? 0,
-            weight: s.weight ?? 0,
-            isCompleted: false,
-            restPlannedSec: e.restSec,
-          })
-        ),
-      })) as any,
+        sets: (e.sets && e.sets.length > 0 
+          ? e.sets 
+          : Array.from({ length: e.targetSets || 1 }).map(() => ({ reps: 0, weight: 0 }))
+        ).map((s) => ({
+          id: uid(),
+          reps: s.reps ?? 0,
+          weight: s.weight ?? 0,
+          isCompleted: false,
+          restPlannedSec: e.restSec,
+        })),
+      })),
     };
 
     if (onStartTemplate) {
       onStartTemplate(workout);
-    } else {
-      setCurrentWorkout(workout);
-      navigate('/activities/gym/active');
+      return;
     }
+
+    startSession('GYM', workout);      // ✅ statt setCurrentWorkout
+    requestOverlayExpand();            // ✅ optional: overlay direkt auf
+    navigate('/activities/gym');       // ✅ oder wohin auch immer dein Dashboard ist
   };
+
 
   const createTemplate = async (payload: WorkoutTemplate) => {
     await fetch('/api/templates/gym', {

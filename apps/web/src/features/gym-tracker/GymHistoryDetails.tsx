@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Repeat, Save } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
@@ -15,61 +15,108 @@ function volume(w: WorkoutSession): number {
 const GymHistoryDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { workoutHistory, setCurrentWorkout } = useApp();
 
-  const workout = useMemo(() => workoutHistory.find((w) => w.id === id), [workoutHistory, id]);
+  const { workoutHistory, startSession, requestOverlayExpand } = useApp();
+
+  const fromState = useMemo(() => workoutHistory.find((w) => w.id === id), [workoutHistory, id]);
+  const [workout, setWorkout] = useState<WorkoutSession | null>(fromState ?? null);
+  const [loading, setLoading] = useState(!fromState);
   const [saving, setSaving] = useState(false);
+
+  // ✅ Fallback: load from API if not in memory (direct URL / refresh)
+  useEffect(() => {
+    if (fromState) {
+      setWorkout(fromState);
+      setLoading(false);
+      return;
+    }
+    if (!id) return;
+
+    (async () => {
+      setLoading(true);
+      try {
+        const token = localStorage.getItem('relay-token');
+        const res = await fetch(`/api/workouts/${id}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error(`Failed to load workout (${res.status})`);
+        const data = (await res.json()) as { workout?: WorkoutSession };
+        setWorkout(data.workout ?? null);
+      } catch (e) {
+        console.error(e);
+        setWorkout(null);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [id, fromState]);
+
+  if (loading) {
+    return (
+      <div className="p-6 text-[var(--text-muted)] font-bold">
+        Loading…
+      </div>
+    );
+  }
 
   if (!workout) {
     return (
       <div className="p-6">
-        <button onClick={() => navigate(-1)} className="inline-flex items-center gap-2 text-[var(--text)]">
+        <button
+          onClick={() => navigate('/activities/gym/history')}
+          className="inline-flex items-center gap-2 text-[var(--text)]"
+        >
           <ArrowLeft size={18} /> Back
         </button>
-        <p className="mt-6 text-[var(--text-muted)] font-bold">Workout not found (maybe not loaded yet).</p>
+        <p className="mt-6 text-[var(--text-muted)] font-bold">Workout not found.</p>
       </div>
     );
   }
 
   const repeatWorkout = () => {
     const now = Date.now();
+
     const next: WorkoutSession = {
       dataVersion: 1,
       id: uid(),
       startTime: now,
+      updatedAt: now,
       status: 'active',
       module: 'GYM',
       templateIdUsed: null,
-      updatedAt: now,
-      // copy structure, but sets start empty (or “targets” as ghost)
+      name: workout.name,
+
       logs: workout.logs.map((l) => ({
         exerciseId: l.exerciseId,
         exerciseName: l.exerciseName,
         restSecDefault: l.restSecDefault,
+        notes: l.notes,
         sets: l.sets.map((_s, idx) => ({
           id: uid(),
           reps: 0,
           weight: 0,
           isCompleted: false,
-          // keep planned rest if present:
           restPlannedSec: l.sets[idx]?.restPlannedSec ?? l.restSecDefault,
         })),
       })),
     };
 
-    setCurrentWorkout(next);
-    navigate('/activities/gym/active');
+    // ✅ Kernel way
+    startSession('GYM', next);
+    requestOverlayExpand();
+    navigate('/activities/gym');
   };
 
   const saveAsTemplate = async () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('relay-token');
+
       const payload: WorkoutTemplate = {
         dataVersion: 1,
         id: uid(),
         module: 'GYM',
-        name: `Template from ${new Date(workout.startTime).toLocaleDateString('en-US')}`,
+        name: workout.name || `Template ${new Date(workout.startTime).toLocaleDateString('en-US')}`,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         data: {
@@ -78,11 +125,13 @@ const GymHistoryDetail: React.FC = () => {
             exerciseName: l.exerciseName,
             targetSets: l.sets.length,
             restSec: l.restSecDefault ?? 120,
+            // optional: keep last-set targets as defaults (nice UX)
+            sets: l.sets.map((s) => ({ reps: s.reps ?? 0, weight: s.weight ?? 0 })),
           })),
         },
       };
 
-      await fetch('/api/templates/gym', {
+      const res = await fetch('/api/templates/gym', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -90,6 +139,16 @@ const GymHistoryDetail: React.FC = () => {
         },
         body: JSON.stringify(payload),
       });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || `Failed to save template (${res.status})`);
+      }
+
+      // ✅ go to templates (or just toast)
+      navigate('/activities/gym/templates');
+    } catch (e: any) {
+      alert(e?.message ?? 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -102,7 +161,7 @@ const GymHistoryDetail: React.FC = () => {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => navigate('/activities/gym/history')}
           className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2 text-[var(--text)]"
         >
           <ArrowLeft size={18} />
@@ -117,13 +176,16 @@ const GymHistoryDetail: React.FC = () => {
             <Repeat size={16} />
             <span className="text-[10px] font-[900] uppercase tracking-widest">Repeat</span>
           </button>
+
           <button
             disabled={saving}
             onClick={saveAsTemplate}
             className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2 text-[var(--text)] disabled:opacity-60"
           >
             <Save size={16} />
-            <span className="text-[10px] font-[900] uppercase tracking-widest">Save Template</span>
+            <span className="text-[10px] font-[900] uppercase tracking-widest">
+              {saving ? 'Saving…' : 'Save Template'}
+            </span>
           </button>
         </div>
       </div>

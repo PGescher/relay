@@ -15,7 +15,7 @@ import {
   getLoreFacts 
 } from '../analyticsUtils';
 
-import { WorkoutStatus } from '@relay/shared';
+import { WorkoutStatus, WorkoutSession } from '@relay/shared';
 
 const GymAnalytics: React.FC<{ workoutHistory: WorkoutSession[] }> = ({ workoutHistory }) => {
   // everything else stays the same
@@ -44,7 +44,7 @@ const GymAnalytics: React.FC<{ workoutHistory: WorkoutSession[] }> = ({ workoutH
 
   const chartData = useMemo(() => {
     return workoutHistory
-      .filter(w => w.status === WorkoutStatus.completed)
+      .filter(w => w.status === "completed")
       .sort((a, b) => a.startTime - b.startTime)
       .map(w => {
         const date = new Date(w.startTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });

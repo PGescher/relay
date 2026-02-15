@@ -4,6 +4,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider } from './context/AppContext'; 
 
+
 import { Home, MessageSquare, Zap, User, LogOut, Sparkles } from 'lucide-react';
 import AppShell from './components/layout/AppShell';
 
@@ -16,7 +17,7 @@ import ActivitiesOverview from './features/activities/ActivitesOverview';
 import GymDashboard from './features/gym-tracker/GymDashboard';
 import GymHistory from './features/gym-tracker/GymHistory';
 import HomeHub from './features/home/HomeHub';
-import ActiveWorkout from './features/gym-tracker/ActiveWorkout';
+import ActiveWorkout from './features/gym-tracker/GymExpandedSessionView';
 import GymHistoryDetail from './features/gym-tracker/GymHistoryDetails';
 
 import TemplateBuilderPage from './features/gym-tracker/TemplateBuilderPage';

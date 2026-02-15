@@ -11,7 +11,7 @@ export const LoginSchema = z.object({
     password: z.string(),
 });
 // Activity Types
-export const ActivityModuleSchema = z.enum(['GYM', 'RUNNING', 'CYCLING']);
+export const ActivityModuleSchema = z.enum(['gym', 'running', 'cycling']);
 // Workout Schema
 export const WorkoutSchema = z.object({
     id: z.string().uuid().optional(),
@@ -19,5 +19,5 @@ export const WorkoutSchema = z.object({
     module: ActivityModuleSchema,
     startTime: z.date().or(z.string()),
     endTime: z.date().or(z.string()).optional(),
-    status: z.enum(['ACTIVE', 'COMPLETED', 'CANCELLED']),
+    status: z.enum(['active', 'completed', 'cancelled']),
 });

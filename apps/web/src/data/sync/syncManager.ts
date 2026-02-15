@@ -5,7 +5,6 @@ import { listPending, getPendingPayload, dequeuePending } from './pendingQueue';
 import { listPendingTemplates, getPendingTemplatePayload, dequeuePendingTemplate } from './pendingTemplates';
 
 async function apiPushTemplate(token: string, payload: any) {
-  // create vs update anhand payload.endpoint
   const res = await fetch(payload.endpoint, {
     method: payload.method,
     headers: {
@@ -14,8 +13,13 @@ async function apiPushTemplate(token: string, payload: any) {
     },
     body: JSON.stringify(payload.body),
   });
-  if (!res.ok) throw new Error(`template push failed: ${res.status}`);
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`template push failed: ${res.status} ${txt}`);
+  }
 }
+
 
 export async function syncNow(params: { userId: string; token: string; module?: string }) {
   const { userId, token, module } = params;
@@ -53,6 +57,22 @@ export async function syncNow(params: { userId: string; token: string; module?: 
       break;
     }
   }
+
+  /*
+  // 1c) Pending deletes
+  const pendingD = listPendingDeletes(userId);
+  for (const wid of pendingD) {
+    try {
+      const res = await fetch(`/api/workouts/${wid}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) dequeuePendingDelete(userId, wid);
+    } catch {
+      break;
+    }
+  }
+  */
 
   // 2) Pull
   const since = getNumber(storage.lastSyncKey(userId), 0);

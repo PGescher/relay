@@ -3,11 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { Play, History, LayoutTemplate, TrendingUp, UploadCloud } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { WorkoutStatus, type WorkoutSession } from '@relay/shared';
-import ActiveWorkout from './ActiveWorkout';
+import ActiveWorkout from './GymExpandedSessionView';
 import GymHistory from './GymHistory';
 import GymTemplates from './GymTemplates';
 import GymImportExport from './GymImportExport';
 import { useWorkoutDraftRestore } from './useWorkoutDraftRestore';
+
+import { registerModule } from '../../session/moduleRegistry';
+import { gymSessionAdapter } from './gymSessionAdapter';
+
 
 const TABS = ['history', 'templates', 'import'] as const;
 type Tab = (typeof TABS)[number];
@@ -15,7 +19,7 @@ type Tab = (typeof TABS)[number];
 const uid = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
 const GymDashboard: React.FC = () => {
-  const { currentWorkout, setCurrentWorkout, workoutHistory, setWorkoutHistory, requestOverlayExpand } = useApp();
+  const { activeSession, startSession, workoutHistory, setWorkoutHistory, requestOverlayExpand, expandSession } = useApp();
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('history');
 
@@ -24,14 +28,19 @@ const GymDashboard: React.FC = () => {
 
   // If user is currently in an active workout route, we show ActiveWorkout there,
   // BUT also: if state has workout AND we navigated here, allow resume.
-  const hasActive = !!currentWorkout && currentWorkout.status === WorkoutStatus.active;
+  const hasActive =
+    !!activeSession &&
+    activeSession.module === 'GYM' &&
+    activeSession.lifecycle === 'ACTIVE' &&
+    (activeSession.state as any)?.status === "active";
+
 
   // Pull completed workouts from DB (optional but nice)
   useEffect(() => {
     const load = async () => {
       const token = localStorage.getItem('relay-token');
       try {
-        const res = await fetch('/api/workouts?module=GYM&status=COMPLETED', {
+        const res = await fetch('/api/workouts?module=GYM&status=completed', {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) return;
@@ -54,14 +63,14 @@ const GymDashboard: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const startWorkout = () => {
+    const startWorkout = () => {
     const now = Date.now();
 
     const newWorkout: WorkoutSession = {
       dataVersion: 1,
       id: uid(),
       module: 'GYM',
-      status: WorkoutStatus.active,
+      status: "active",
 
       startTime: now,
       updatedAt: now,
@@ -70,12 +79,14 @@ const GymDashboard: React.FC = () => {
       templateIdUsed: null,
     };
 
-    setCurrentWorkout(newWorkout);
-    //navigate('/activities/gym');
+   startSession('GYM', newWorkout);
+   //navigate('/activities/gym/active');
   };
 
+
   const resumeWorkout = () => {
-    requestOverlayExpand?.();
+    //requestOverlayExpand?.();
+    expandSession?.();
     //navigate('/activities/gym/active');
   };
 
@@ -161,8 +172,8 @@ const GymDashboard: React.FC = () => {
       {/* Content */}
       {tab === 'history' && <GymHistory />}
       {tab === 'templates' && <GymTemplates onStartTemplate={(workout) => {
-        setCurrentWorkout(workout);
-        navigate('/activities/gym/active');
+        startSession('GYM', workout);
+        //navigate('/activities/gym/active');
       }} />}
       {tab === 'import' && <GymImportExport />}
     </div>

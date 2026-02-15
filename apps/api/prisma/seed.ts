@@ -96,7 +96,7 @@ async function main() {
     data: {
       userId: dev.id,
       module: 'GYM' as any,
-      status: WorkoutStatus.completed,
+      status: "completed",
       startTime: new Date(Date.now() - 60 * 60 * 1000),
       endTime: new Date(),
       data: { seed: true },

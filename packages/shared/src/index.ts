@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+export * from './session';
+
+
 // =======================
 // Auth schemas (NEW)
 // =======================
@@ -129,11 +132,9 @@ export interface ExerciseLog {
   sets: SetLog[];
 }
 
-export enum WorkoutStatus {
-  planned,
-  active,
-  completed
-}
+export const WorkoutStatusSchema = z.enum(['planned', 'active', 'completed', 'cancelled']);
+export type WorkoutStatus = z.infer<typeof WorkoutStatusSchema>;
+
 
 
 export interface WorkoutSession {

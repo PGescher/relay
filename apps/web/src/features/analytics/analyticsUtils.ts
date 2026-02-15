@@ -132,7 +132,7 @@ export const getAdvancedInsights = (workouts: WorkoutSession[]) => {
 };
 
 export const getScientificInsights = (workouts: WorkoutSession[]) => {
-  const completed = workouts.filter(w => w.status === WorkoutStatus.completed);
+  const completed = workouts.filter(w => w.status === "completed");
   const allSets = completed.flatMap(w => w.logs.flatMap(l => l.sets.filter(s => s.isCompleted)));
   
   // Use 'as any' for rpe/rir because they are optional/missing in some Zod definitions

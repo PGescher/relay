@@ -128,7 +128,7 @@ function requestOverlayMinimize() {
 
 const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
   const {
-    currentWorkout,
+    activeSession,
     activeOverlay,
     handMode,
     toggleHandMode,
@@ -158,8 +158,9 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
   const openMenuBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const isHome = location.pathname === '/home';
-  const isLiveRoute = location.pathname === '/activities/gym/active';
-  const hasLive = !!currentWorkout && !isLiveRoute;
+  // Keep this route check permissive & module-agnostic.
+  const isLiveRoute = location.pathname.endsWith('/active');
+  const hasLive = !!activeSession && activeSession.lifecycle === 'ACTIVE' && !isLiveRoute;
 
   const showLivePill = hasLive;
   const showLiveBadge = hasLive;
@@ -177,15 +178,17 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
 
   // workout timer (for live pill)
   useEffect(() => {
-    if (!currentWorkout) {
+    if (!activeSession || activeSession.lifecycle !== 'ACTIVE') {
       setElapsed(0);
       return;
     }
-    const tick = () => setElapsed(Math.floor((Date.now() - currentWorkout.startTime) / 1000));
+    const startedAt = activeSession.meta?.startedAt ?? Date.now();
+    const tick = () => setElapsed(Math.floor((Date.now() - startedAt) / 1000));
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [currentWorkout]);
+  }, [activeSession?.id, activeSession?.lifecycle, activeSession?.meta?.startedAt]);
+
 
   // close overlays on route change
   useEffect(() => {
@@ -583,8 +586,10 @@ const AppShell: React.FC<AppShellProps> = ({ onLogout }) => {
             hasLive={hasLive}
             onPress={(el) => openFlowerFrom(el)}
             onDoubleAction={() => {
-              if (hasLive) navigateWithOverlayMinimize('/activities/gym/active');
-              else navigateWithOverlayMinimize('/home');
+              if (hasLive && activeSession) {
+                const modulePath = String(activeSession.module).toLowerCase();
+                navigateWithOverlayMinimize(`/activities/${modulePath}/active`);
+              } else navigateWithOverlayMinimize('/home');
             }}
           />
         </div>

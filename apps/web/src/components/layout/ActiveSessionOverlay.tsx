@@ -1,85 +1,114 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useCallback } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Maximize2, Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { useApp } from '../../context/AppContext';
-import { ActiveWorkoutOverlay, type ActiveWorkoutOverlayHandle } from '../../features/gym-tracker/ActiveWorkout';
 
-type OverlayMode = 'expanded' | 'minimized';
+// ✅ Registry
+import { getModuleAdapter } from '../../session/moduleRegistry';
 
 const FAST = { type: 'spring', stiffness: 900, damping: 52, mass: 0.6 } as const;
-
 const MINIMIZE_EVENT = 'relay:overlay:minimize';
 
 export const ActiveSessionOverlay: React.FC = () => {
   const reduceMotion = useReducedMotion();
   const app = useApp() as any;
-  const { currentWorkout, handMode, setActiveOverlay, overlayExpandReq } = app;
 
-  const [mode, setMode] = useState<OverlayMode>('expanded');
+  const {
+    activeSession,
+    setActiveSessionState,
+    minimizeSession,
+    expandSession,
+    finishSession,
+    cancelSession,
+    handMode,
+    setActiveOverlay,
+    overlayExpandReq,
+  } = app;
 
-  // keep scroll position when minimizing
   const savedScrollTopRef = useRef<number>(0);
-  const workoutRef = useRef<ActiveWorkoutOverlayHandle | null>(null);
+  const sessionViewRef = useRef<any>(null);
 
+  const hasSession = !!activeSession;
+  const overlayMode = activeSession?.ui?.overlay === 'MINIMIZED' ? 'minimized' : 'expanded';
+
+  // keep AppShell in sync
   useEffect(() => {
-    // when workout starts: open expanded
-    if (currentWorkout) setMode('expanded');
-  }, [currentWorkout?.id]);
-
-  const dockSide: 'left' | 'right' = useMemo(() => {
-    return handMode === 'left' ? 'left' : 'right';
-  }, [handMode]);
-
-  // expose overlay state to AppShell (interaction + header)
-  useEffect(() => {
-    if (!currentWorkout) {
+    if (!activeSession) {
       setActiveOverlay?.({ mode: 'hidden' });
       return;
     }
-    if (mode === 'expanded') setActiveOverlay?.({ mode: 'expanded' });
-    else setActiveOverlay?.({ mode: 'minimized', dock: dockSide });
-  }, [currentWorkout?.id, mode, dockSide, setActiveOverlay]);
+    if (overlayMode === 'expanded') setActiveOverlay?.({ mode: 'expanded' });
+    else setActiveOverlay?.({ mode: 'minimized', dock: handMode === 'left' ? 'left' : 'right' });
+  }, [activeSession?.id, overlayMode, handMode, setActiveOverlay]);
 
-  // If someone requests expanding (e.g. "Resume workout"), force expanded.
   useEffect(() => {
-    if (!currentWorkout) return;
-    setMode('expanded');
-  }, [overlayExpandReq]); // intentionally not depending on mode/currentWorkout.id
+    if (!activeSession) return;
+    expandSession?.();
+  }, [overlayExpandReq]); // intentionally not depending on activeSession.id
 
-  const minimize = () => {
-    savedScrollTopRef.current = workoutRef.current?.getScrollTop?.() ?? 0;
-    setMode('minimized');
-  };
+  const minimize = useCallback(() => {
+    savedScrollTopRef.current = sessionViewRef.current?.getScrollTop?.() ?? 0;
+    minimizeSession?.();
+  }, [minimizeSession]);
 
-  const expand = () => {
-    setMode('expanded');
+  const expand = useCallback(() => {
+    expandSession?.();
     requestAnimationFrame(() => {
-      workoutRef.current?.setScrollTop?.(savedScrollTopRef.current);
+      sessionViewRef.current?.setScrollTop?.(savedScrollTopRef.current);
     });
-  };
+  }, [expandSession]);
 
-  // ✅ MINIMIZE ONLY WHEN APPSHELL ASKS FOR IT
+  // MINIMIZE ONLY WHEN APPSHELL ASKS FOR IT
   useEffect(() => {
     const handler = () => {
-      if (!currentWorkout) return;
-      if (mode !== 'expanded') return;
+      if (!activeSession) return;
+      if (overlayMode !== 'expanded') return;
       minimize();
     };
 
-    window.addEventListener(MINIMIZE_EVENT, handler as EventListener);
-    return () => window.removeEventListener(MINIMIZE_EVENT, handler as EventListener);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentWorkout?.id, mode]);
+    window.addEventListener('relay:overlay:minimize', handler as EventListener);
+    return () => window.removeEventListener('relay:overlay:minimize', handler as EventListener);
+  }, [activeSession?.id, overlayMode, minimize]);
 
-  if (!currentWorkout) return null;
+  // ✅ Build adapter/view only when session exists (but do it safely)
+  const adapter = useMemo(() => {
+    if (!activeSession) return null;
+    return getModuleAdapter(activeSession.module);
+  }, [activeSession?.module]);
+
+  const View: any = useMemo(() => {
+    if (!adapter) return null;
+    return overlayMode === 'expanded' ? adapter.ExpandedView : adapter.MinimizedView;
+  }, [adapter, overlayMode]);
+
+  const viewApi = useMemo(
+    () => ({
+      setState: setActiveSessionState,
+      minimize,
+      expand,
+      finish: finishSession,
+      cancel: cancelSession,
+    }),
+    [setActiveSessionState, minimize, expand, finishSession, cancelSession]
+  );
+
+  if (!hasSession || !adapter || !View) return null;
+
+  const dockSide = activeSession!.ui.dockSide === 'LEFT' ? 'left' : 'right';
+
+  // ...rest of your JSX (unchanged)
+
+
+  
+
 
   return (
     <>
       {/* Expanded overlay */}
       <AnimatePresence>
-        {mode === 'expanded' && (
+        {overlayMode === 'expanded' && (
           <motion.div
             key="overlay-expanded"
             className="fixed inset-0 z-[220]"
@@ -91,20 +120,10 @@ export const ActiveSessionOverlay: React.FC = () => {
             {/* Backdrop */}
             <div className="absolute inset-0 bg-black/18 backdrop-blur-[2px]" />
 
-            {/* Home button (visual only; your real nav is in AppShell) */}
-            <Link
-              to="/home"
-              className="fixed z-[240] top-[calc(env(safe-area-inset-top)+10px)] left-3 w-11 h-11 rounded-2xl bg-[var(--primary)] shadow-lg shadow-black/15 flex items-center justify-center"
-              aria-label="Home"
-              title="Home"
-            >
-              <Sparkles className="text-white w-5 h-5" />
-            </Link>
-
-            {/* full-screen session (NO DRAG => better scrolling) */}
+            {/* full-screen session */}
             <div className="absolute inset-0">
               <div className="h-full w-full bg-[var(--bg)]">
-                <ActiveWorkoutOverlay ref={workoutRef} mode="expanded" onRequestMinimize={minimize} />
+                <View ref={sessionViewRef} sessionId={activeSession.id} state={activeSession.state} api={viewApi} />
               </div>
             </div>
           </motion.div>
@@ -113,7 +132,7 @@ export const ActiveSessionOverlay: React.FC = () => {
 
       {/* Minimized pill */}
       <AnimatePresence>
-        {mode === 'minimized' && (
+        {overlayMode === 'minimized' && (
           <motion.button
             key="overlay-pill"
             type="button"

@@ -134,7 +134,7 @@ export function TemplateBuilderModal({ open, onClose, exercises, onCreate, modul
   }
 
   return (
-    <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-end justify-center p-4">
+    <div className="fixed inset-0 z-[400] bg-black/60 backdrop-blur-sm flex items-end justify-center p-4">
       <div className="w-full max-w-md rounded-[40px] border border-[var(--border)] bg-[var(--bg)] p-6 animate-in slide-in-from-bottom duration-300">
         <div className="flex items-center justify-between mb-5">
           <div className="text-xl font-[900] italic text-[var(--text)]">NEW TEMPLATE</div>

@@ -70,7 +70,7 @@ export function ExerciseLibraryModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex flex-col justify-end p-4">
+    <div className="fixed inset-0 z-[400] bg-black/60 backdrop-blur-sm flex flex-col justify-end p-4">
       <div className="bg-[var(--bg)] text-[var(--text)] rounded-[40px] p-6 max-h-[85vh] overflow-hidden w-full max-w-md mx-auto border border-[var(--border)] animate-in slide-in-from-bottom duration-300">
         {/* Header */}
         <div className="flex justify-between items-center mb-4">
